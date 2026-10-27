@@ -60,7 +60,7 @@ app/src/main/java/dev/glass/launcher/
 1. **Clone the repository:**
    ```bash
    git clone https://github.com/Reaobaka56/liquid-glass.git
-   cd liquid-glass
+   cd liquid-glass/GlassLauncher
    ```
 
 2. **Build debug APK with Gradle:**
