@@ -12,6 +12,8 @@ A modern, minimalist, frosted-glass Android Home Screen built natively with **Ko
 ## ✨ Key Features
 
 * **🔮 Liquid Glass Refraction (Android 13+):** An AGSL lens bends the wallpaper around each panel's rim, with colour fringing and a specular edge highlight. Tune `refraction`, `bevel`, `dispersion` and `specular` in `GlassPanel`.
+* **🎛️ Glass Material System:** One `GlassMaterial` (blur, tint/opacity, refraction, thickness, dispersion, highlight, reflection, inner shading) shared by every surface, with five presets: Clear, Frost, Smoke, Midnight, Aurora. Long-press the home screen → *Glass settings* to switch presets and adjust intensity and icon size; each preset chip is a live preview. Settings persist.
+* **🛡️ Graceful Degradation:** Full (blur + AGSL lens) → Reduced (blur only: Android 12, battery saver, or a shader that fails to compile) → Minimal (tint only: Android 11 and below). The shader is compiled once per panel.
 * **🧊 Real Backdrop Blur:** Dynamically samples and blurs wallpaper behind UI panels on Android 12+ (`RenderEffect`).
 * **📱 Minimalist Home Layout:**
   * Clean Clock & Date widget.
@@ -41,13 +43,19 @@ Built following modern Android development practices and Jetpack guidelines:
 app/src/main/java/dev/glass/launcher/
 ├── MainActivity.kt           # Home activity & system window insets
 ├── AppRepository.kt          # App query, intent resolution, launcher actions
+├── settings/
+│   └── LauncherSettings.kt    # Persisted glass preset, intensity, icon size
 ├── LauncherViewModel.kt       # UI state, wallpaper loading, tilt
 ├── wallpaper/
 │   ├── GlassWallpaperService.kt  # Live wallpaper: home + lock, parallax, shuffle
 │   ├── WallpaperStore.kt      # Shared photo set and current index
 │   └── TiltTracker.kt         # Accelerometer to smoothed tilt, plus Parallax constants
 └── ui/
-    ├── GlassPanel.kt         # Frosted glass effect, blur shader, border & highlight
+    ├── glass/
+    │   ├── GlassMaterial.kt  # Material parameters + presets
+    │   └── GlassShader.kt    # AGSL lens, capability probe, quality levels
+    ├── GlassPanel.kt         # Glass surface: blur + lens + tint, reflections, rim
+    ├── SettingsSheet.kt      # Long-press menu and glass settings sheet
     ├── Backdrop.kt           # Wallpaper sampling & background renderer
     ├── HomeScreen.kt          # Clock widget, dock, and gestures
     └── AppDrawer.kt          # Glass app drawer & search grid
@@ -90,7 +98,7 @@ app/src/main/java/dev/glass/launcher/
 
 ## ⚙️ Customization & Tuning
 
-* **Adjust Blur & Opacity:** Modify `blurRadius`, `tint` and the refraction parameters in [`GlassPanel.kt`](app/src/main/java/dev/glass/launcher/ui/GlassPanel.kt).
+* **Tune the material:** Edit the preset values in [`GlassMaterial.kt`](app/src/main/java/dev/glass/launcher/ui/glass/GlassMaterial.kt), or the shader in [`GlassShader.kt`](app/src/main/java/dev/glass/launcher/ui/glass/GlassShader.kt).
 * **Dock App Defaults:** Change launch intent categories in [`AppRepository.kt`](app/src/main/java/dev/glass/launcher/AppRepository.kt).
 
 ---

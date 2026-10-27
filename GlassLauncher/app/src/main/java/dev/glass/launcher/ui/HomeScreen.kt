@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,9 @@ import androidx.compose.ui.unit.sp
 import dev.glass.launcher.AppEntry
 import dev.glass.launcher.AppRepository
 import dev.glass.launcher.LauncherViewModel
+import dev.glass.launcher.ui.glass.LocalGlassMaterial
+import dev.glass.launcher.ui.glass.LocalGlassQuality
+import dev.glass.launcher.ui.glass.rememberGlassQuality
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -54,48 +58,80 @@ fun HomeScreen(
         AppRepository.launch(context, app.packageName)
     }
 
-    // On a home screen, Back only closes the drawer; it never leaves the launcher.
-    BackHandler { vm.drawerOpen = false }
+    // On a home screen, Back only closes the top-most layer; it never leaves the launcher.
+    BackHandler {
+        when {
+            vm.settingsOpen -> vm.settingsOpen = false
+            vm.menuOpen -> vm.menuOpen = false
+            else -> vm.drawerOpen = false
+        }
+    }
 
     val tilt = remember(vm) { { vm.tilt } }
-    BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    var total = 0f
-                    detectVerticalDragGestures(
-                        onDragStart = { total = 0f },
-                        onDragEnd = { if (total < -120f) vm.drawerOpen = true },
-                        onDragCancel = { total = 0f },
-                        onVerticalDrag = { _, dy -> total += dy },
-                    )
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(onLongPress = { onPickWallpaper() })
-                },
-        ) {
-            Column(
+    val settings = vm.settings
+    val material = remember(settings.preset, settings.glassIntensity) { settings.material() }
+    CompositionLocalProvider(
+        LocalGlassMaterial provides material,
+        LocalGlassQuality provides rememberGlassQuality(),
+        LocalIconSize provides settings.iconSizeDp.dp,
+    ) {
+        BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
+            Box(
                 Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(20.dp),
+                    .pointerInput(Unit) {
+                        var total = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { total = 0f },
+                            onDragEnd = { if (total < -120f) vm.drawerOpen = true },
+                            onDragCancel = { total = 0f },
+                            onVerticalDrag = { _, dy -> total += dy },
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { vm.menuOpen = true })
+                    },
             ) {
-                ClockCard()
-                Spacer(Modifier.weight(1f))
-                SwipeHandle()
-                Spacer(Modifier.height(14.dp))
-                Dock(vm.dock, launch)
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(20.dp),
+                ) {
+                    ClockCard()
+                    Spacer(Modifier.weight(1f))
+                    SwipeHandle()
+                    Spacer(Modifier.height(14.dp))
+                    Dock(vm.dock, launch)
+                }
             }
-        }
 
-        AnimatedVisibility(
-            visible = vm.drawerOpen,
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
-            AppDrawer(apps = vm.apps, onLaunch = launch)
+            AnimatedVisibility(
+                visible = vm.drawerOpen,
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                AppDrawer(apps = vm.apps, onLaunch = launch)
+            }
+
+            if (vm.menuOpen) {
+                HomeMenu(
+                    onChangeWallpaper = {
+                        vm.menuOpen = false
+                        onPickWallpaper()
+                    },
+                    onGlassSettings = {
+                        vm.menuOpen = false
+                        vm.settingsOpen = true
+                    },
+                    onDismiss = { vm.menuOpen = false },
+                )
+            }
+
+            if (vm.settingsOpen) {
+                GlassSettingsSheet(settings = settings, onDismiss = { vm.settingsOpen = false })
+            }
         }
     }
 }
