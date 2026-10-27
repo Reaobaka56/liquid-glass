@@ -1,36 +1,92 @@
-# Glass Launcher
+# 🧊 Liquid Glass Launcher
 
-A frosted-glass Android home screen built with Kotlin and Jetpack Compose.
+A modern, minimalist, frosted-glass Android Home Screen built natively with **Kotlin** and **Jetpack Compose**.
 
-- Real backdrop blur: each panel blurs a copy of the wallpaper behind it (Android 12+).
-- Clock card, 4-app dock (phone, messages, browser, camera when defaults exist), searchable app drawer.
-- Long-press the home screen to pick a wallpaper. Without one, a built-in aurora gradient is used.
-- Android 11 and below: panels fall back to a darker translucent tint (no blur).
+![Android](https://img.shields.io/badge/Android-35-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
+![Compose](https://img.shields.io/badge/Jetpack_Compose-2024.12.01-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)
+![Min SDK](https://img.shields.io/badge/Min_SDK-26_(Android_8.0)-blue?style=for-the-badge)
 
-## Run it
+---
 
-1. Install Android Studio (Ladybug or newer) and open this folder.
-2. Let Gradle sync. If it asks, accept the suggested plugin or version updates.
-3. Plug in your phone with USB debugging on, pick it, press Run.
-4. Press Home on the phone, choose "Glass Launcher", then "Always" to make it the default.
-   To go back, Settings > Apps > Default apps > Home app.
+## ✨ Key Features
 
-No `gradlew` is included. Android Studio handles that on sync, or run `gradle wrapper` once
-if you want to build from the command line.
+* **🧊 Real Backdrop Blur:** Dynamically samples and blurs wallpaper behind UI panels on Android 12+ (`RenderEffect`).
+* **📱 Minimalist Home Layout:**
+  * Clean Clock & Date widget.
+  * 4-App Quick Dock (Phone, Messages, Browser, Camera defaults).
+* **🔍 Searchable Glass App Drawer:** Smooth swipe-up gesture with real-time app filtering.
+* **🖼️ Custom Wallpaper Picker:** Long-press home screen to pick a custom wallpaper. Features a built-in Aurora gradient fallback when no wallpaper is selected.
+* **⚡ Light & Efficient:** Optimized Compose rendering pipeline; panels only blur their bounded surface area.
+* **🎨 Elegant Fallbacks:** Tinted translucent glass aesthetic for Android 11 and below.
 
-## Where things are
+---
 
-| File | What it does |
-|---|---|
-| `ui/GlassPanel.kt` | The glass effect: blurred wallpaper copy, tint, highlight, edge border |
-| `ui/Backdrop.kt` | Draws the wallpaper and shares it with the panels |
-| `ui/HomeScreen.kt` | Clock card, dock, swipe-up and long-press gestures |
-| `ui/AppDrawer.kt` | Glass app drawer with search, and the app icon cell |
-| `AppRepository.kt` | Lists installed apps, picks dock apps, launches apps |
-| `LauncherViewModel.kt` | App list, dock, wallpaper loading |
+## 🛠️ Architecture & Tech Stack
 
-## Tuning
+Built following modern Android development practices and Jetpack guidelines:
 
-- Blurrier or clearer glass: `blurRadius` and `tint` on `GlassPanel`.
-- Slow on your phone: lower `blurRadius`, or use fewer panels on screen.
-- Panels only blur their own area, so cost scales with panel size.
+* **Language:** Kotlin 2.1.0
+* **UI Toolkit:** Jetpack Compose with Material 3 (`androidx.compose.material3`)
+* **State Management:** Android ViewModel & StateFlow / Coroutines
+* **System Integration:** PackageManager & Intent handlers for default launcher integration (`CATEGORY_HOME`)
+
+### File Map
+
+```text
+app/src/main/java/dev/glass/launcher/
+├── MainActivity.kt           # Home activity & system window insets
+├── AppRepository.kt          # App query, intent resolution, launcher actions
+├── LauncherViewModel.kt       # StateFlow UI state & wallpaper management
+└── ui/
+    ├── GlassPanel.kt         # Frosted glass effect, blur shader, border & highlight
+    ├── Backdrop.kt           # Wallpaper sampling & background renderer
+    ├── HomeScreen.kt          # Clock widget, dock, and gestures
+    └── AppDrawer.kt          # Glass app drawer & search grid
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+* **Android Studio** (Ladybug / 2024.2.1 or newer)
+* **JDK 17+** (JDK 21 recommended)
+* **Android Device / Emulator** (Android 8.0+ / API 26+)
+
+### Building & Running
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/Reaobaka56/liquid-glass.git
+   cd liquid-glass
+   ```
+
+2. **Build debug APK with Gradle:**
+   ```bash
+   ./gradlew assembleDebug
+   ```
+
+3. **Install to connected device:**
+   ```bash
+   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+4. **Set as default launcher:**
+   * Press the **Home** button on your device.
+   * Select **Glass Launcher** → **Always**.
+   * *(To reset: Go to System Settings > Apps > Default Apps > Home App)*
+
+---
+
+## ⚙️ Customization & Tuning
+
+* **Adjust Blur & Opacity:** Modify `blurRadius` and `tint` properties in [`GlassPanel.kt`](app/src/main/java/dev/glass/launcher/ui/GlassPanel.kt).
+* **Dock App Defaults:** Change launch intent categories in [`AppRepository.kt`](app/src/main/java/dev/glass/launcher/AppRepository.kt).
+
+---
+
+## 👤 Author
+
+Developed by **[@Reaobaka56](https://github.com/Reaobaka56)** (Reaobaka Mogajane)
