@@ -77,7 +77,7 @@ half4 main(float2 coord) {
     }
 
     // Smooth the bevel to avoid a harsh, stepped refraction band.
-    float edge = 1.0 - smoothstep(-max(bevel, 1.0), 0.0, sd);
+    float edge = smoothstep(-max(bevel, 1.0), 0.0, sd);
     float bend = edge * edge * (3.0 - 2.0 * edge);
     float2 offset = -normal * bend * strength;
 
