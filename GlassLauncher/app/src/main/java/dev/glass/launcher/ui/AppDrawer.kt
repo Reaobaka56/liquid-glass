@@ -55,7 +55,7 @@ fun AppDrawer(
             .pointerInput(Unit) { detectTapGestures { } }
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(12.dp),
-        shape = RoundedCornerShape(36.dp),
+        cornerRadius = 36.dp,
         blurRadius = 32.dp,
         tint = Color.White.copy(alpha = 0.10f),
     ) {
