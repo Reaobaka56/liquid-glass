@@ -1,19 +1,23 @@
 package dev.glass.launcher
 
 import android.app.Application
-import android.graphics.BitmapFactory
+import android.app.WallpaperManager
+import android.content.ComponentName
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.glass.launcher.wallpaper.GlassWallpaperService
+import dev.glass.launcher.wallpaper.TiltTracker
+import dev.glass.launcher.wallpaper.WallpaperStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -26,15 +30,19 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var wallpaper by mutableStateOf<ImageBitmap?>(null)
         private set
 
+    /** Phone tilt, each axis in -1..1. Read it inside draw lambdas so it doesn't recompose. */
+    var tilt by mutableStateOf(Offset.Zero)
+        private set
+
     var drawerOpen by mutableStateOf(false)
 
-    private val wallpaperFile = File(app.filesDir, "wallpaper.img")
+    private val store = WallpaperStore(app)
+    private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }
+    private var shownPath: String? = null
 
     init {
         refreshApps()
-        viewModelScope.launch {
-            wallpaper = withContext(Dispatchers.IO) { decodeWallpaper() }
-        }
+        reloadWallpaper()
     }
 
     fun refreshApps() {
@@ -55,34 +63,49 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setWallpaper(uri: Uri) {
+    fun startTilt() = tiltTracker.start()
+
+    fun stopTilt() {
+        tiltTracker.stop()
+        tilt = Offset.Zero
+    }
+
+    /**
+     * Shows the photo the wallpaper service is currently on. Call whenever the launcher comes
+     * back to the front: the service may have stepped to the next Photo Shuffle picture while
+     * the screen was off.
+     */
+    fun reloadWallpaper() {
         viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            wallpaper = withContext(Dispatchers.IO) {
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    wallpaperFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                decodeWallpaper()
+            val metrics = getApplication<Application>().resources.displayMetrics
+            val loaded = withContext(Dispatchers.IO) {
+                val file = store.current()
+                if (file?.path == shownPath) return@withContext null to shownPath
+                val bitmap = file?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
+                bitmap?.asImageBitmap() to file?.path
+            }
+            val (image, path) = loaded
+            if (image != null || path != shownPath) {
+                wallpaper = image
+                shownPath = path
             }
         }
     }
 
-    /** Decodes the saved wallpaper, downsampled so it never exceeds roughly screen size. */
-    private fun decodeWallpaper(): ImageBitmap? {
-        if (!wallpaperFile.exists()) return null
-        val metrics = getApplication<Application>().resources.displayMetrics
-
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(wallpaperFile.path, bounds)
-
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= metrics.widthPixels &&
-            bounds.outHeight / (sample * 2) >= metrics.heightPixels
-        ) {
-            sample *= 2
+    /** Replaces the photo set. One photo is a plain wallpaper; several shuffle on lock. */
+    fun setWallpapers(uris: List<Uri>, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { store.replaceWith(uris) }
+            shownPath = null
+            reloadWallpaper()
+            onDone()
         }
+    }
 
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        return BitmapFactory.decodeFile(wallpaperFile.path, options)?.asImageBitmap()
+    /** True when Glass Wallpaper is the system wallpaper, i.e. the lock screen gets it too. */
+    fun liveWallpaperActive(): Boolean {
+        val ctx = getApplication<Application>()
+        val info = WallpaperManager.getInstance(ctx).wallpaperInfo ?: return false
+        return info.component == ComponentName(ctx, GlassWallpaperService::class.java)
     }
 }

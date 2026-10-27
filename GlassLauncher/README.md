@@ -17,7 +17,10 @@ A modern, minimalist, frosted-glass Android Home Screen built natively with **Ko
   * Clean Clock & Date widget.
   * 4-App Quick Dock (Phone, Messages, Browser, Camera defaults).
 * **🔍 Searchable Glass App Drawer:** Smooth swipe-up gesture with real-time app filtering.
-* **🖼️ Custom Wallpaper Picker:** Long-press home screen to pick a custom wallpaper. Features a built-in Aurora gradient fallback when no wallpaper is selected.
+* **🖼️ Wallpaper Picker:** Long-press the home screen and pick one photo, or up to 8 for Photo Shuffle. Features a built-in Aurora gradient fallback when no photo is selected.
+* **📲 Home + Lock Wallpaper:** After picking, Android offers to set *Glass Wallpaper* (a live wallpaper) for the home and lock screens, so both show the same photo.
+* **🧭 Tilt Parallax:** The photo sits slightly oversized behind the glass and shifts as you tilt the phone (accelerometer). The glass panels refract the moving picture, and the lock screen uses the same motion.
+* **🔀 Photo Shuffle:** With several photos, the wallpaper steps to the next one each time the screen turns off, so every wake shows a new picture. (Needs Glass Wallpaper to be the system wallpaper.)
 * **⚡ Light & Efficient:** Optimized Compose rendering pipeline; panels only blur their bounded surface area.
 * **🎨 Elegant Fallbacks:** Tinted translucent glass aesthetic for Android 11 and below.
 
@@ -38,7 +41,11 @@ Built following modern Android development practices and Jetpack guidelines:
 app/src/main/java/dev/glass/launcher/
 ├── MainActivity.kt           # Home activity & system window insets
 ├── AppRepository.kt          # App query, intent resolution, launcher actions
-├── LauncherViewModel.kt       # StateFlow UI state & wallpaper management
+├── LauncherViewModel.kt       # UI state, wallpaper loading, tilt
+├── wallpaper/
+│   ├── GlassWallpaperService.kt  # Live wallpaper: home + lock, parallax, shuffle
+│   ├── WallpaperStore.kt      # Shared photo set and current index
+│   └── TiltTracker.kt         # Accelerometer to smoothed tilt, plus Parallax constants
 └── ui/
     ├── GlassPanel.kt         # Frosted glass effect, blur shader, border & highlight
     ├── Backdrop.kt           # Wallpaper sampling & background renderer

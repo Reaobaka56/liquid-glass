@@ -17,15 +17,21 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
+import dev.glass.launcher.wallpaper.Parallax
 
-/** What glass panels blur: the wallpaper, plus the root size so the copy lines up. */
+/**
+ * What glass panels blur: the wallpaper, plus the root size so the copy lines up.
+ * [tilt] is read during drawing only, so tilting never recomposes anything.
+ */
 @Immutable
 data class Backdrop(
     val size: IntSize,
     val wallpaper: ImageBitmap?,
+    val tilt: () -> Offset,
 )
 
 val LocalBackdrop = compositionLocalOf<Backdrop?> { null }
@@ -37,6 +43,7 @@ val LocalBackdrop = compositionLocalOf<Backdrop?> { null }
 @Composable
 fun BackdropHost(
     wallpaper: ImageBitmap?,
+    tilt: () -> Offset = NoTilt,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -47,25 +54,44 @@ fun BackdropHost(
             .fillMaxSize()
             .onSizeChanged { size = it },
     ) {
-        BackdropArt(wallpaper, Modifier.fillMaxSize())
-        CompositionLocalProvider(LocalBackdrop provides Backdrop(size, wallpaper)) {
+        BackdropArt(wallpaper, Modifier.fillMaxSize(), tilt)
+        CompositionLocalProvider(LocalBackdrop provides Backdrop(size, wallpaper, tilt)) {
             content()
         }
     }
 }
 
-/** The picked wallpaper, or a built-in aurora gradient when none is set. */
+val NoTilt: () -> Offset = { Offset.Zero }
+
+/**
+ * The picked wallpaper, or a built-in aurora gradient when none is set.
+ *
+ * It is drawn [Parallax.ZOOM] times larger than the screen and shifted against the phone's
+ * [tilt]. [GlassPanel] draws its own copy through this same function, so the glass always
+ * refracts exactly what is behind it. The wallpaper service applies the same transform.
+ */
 @Composable
-fun BackdropArt(wallpaper: ImageBitmap?, modifier: Modifier = Modifier) {
+fun BackdropArt(
+    wallpaper: ImageBitmap?,
+    modifier: Modifier = Modifier,
+    tilt: () -> Offset = NoTilt,
+) {
+    val parallax = Modifier.graphicsLayer {
+        val t = tilt()
+        scaleX = Parallax.ZOOM
+        scaleY = Parallax.ZOOM
+        translationX = -t.x * size.width * Parallax.SHIFT_X
+        translationY = -t.y * size.height * Parallax.SHIFT_Y
+    }
     if (wallpaper != null) {
         Image(
             bitmap = wallpaper,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = modifier,
+            modifier = modifier.then(parallax),
         )
     } else {
-        Canvas(modifier) {
+        Canvas(modifier.then(parallax)) {
             drawRect(
                 Brush.linearGradient(
                     colors = listOf(Color(0xFF0B1026), Color(0xFF1B1146), Color(0xFF3A1C5C)),

@@ -224,7 +224,7 @@ fun GlassPanel(
                         }
                     },
                 ) {
-                    BackdropArt(backdrop.wallpaper, Modifier.fillMaxSize())
+                    BackdropArt(backdrop.wallpaper, Modifier.fillMaxSize(), backdrop.tilt)
                 }
             }
         }
