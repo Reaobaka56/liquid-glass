@@ -57,7 +57,8 @@ fun HomeScreen(
     // On a home screen, Back only closes the drawer; it never leaves the launcher.
     BackHandler { vm.drawerOpen = false }
 
-    BackdropHost(wallpaper = vm.wallpaper) {
+    val tilt = remember(vm) { { vm.tilt } }
+    BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
         Box(
             Modifier
                 .fillMaxSize()
