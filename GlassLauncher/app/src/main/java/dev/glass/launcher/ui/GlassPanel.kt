@@ -1,15 +1,12 @@
 package dev.glass.launcher.ui
 
-import android.graphics.RenderEffect
-import android.graphics.RuntimeShader
-import android.graphics.Shader
 import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,7 +21,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -35,136 +31,59 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import dev.glass.launcher.ui.glass.GlassQuality
+import dev.glass.launcher.ui.glass.LensShader
+import dev.glass.launcher.ui.glass.LocalGlassMaterial
+import dev.glass.launcher.ui.glass.LocalGlassQuality
+import dev.glass.launcher.ui.glass.GlassMaterial
 import kotlin.math.roundToInt
 
 /**
- * Rounded-rectangle optical lens for Android 13+.
+ * A liquid-glass surface.
  *
- * Refraction and dispersion are confined to the bevel, with a smooth falloff.
- * A directional specular reflection and restrained cool rim tint add depth without
- * turning the whole panel into a glowing neon card.
- */
-private const val LENS_AGSL = """
-uniform shader content;
-uniform float2 size;
-uniform float radius;
-uniform float bevel;
-uniform float strength;
-uniform float dispersion;
-uniform float2 lightDir;
-uniform float specular;
-uniform float rimGlow;
-
-float2 clampPos(float2 p) {
-    return clamp(p, float2(0.5), size - float2(0.5));
-}
-
-half4 main(float2 coord) {
-    float2 halfSize = size * 0.5;
-    float2 p = coord - halfSize;
-    float2 q = abs(p) - (halfSize - float2(radius));
-
-    // Signed distance: 0 at the edge, negative inside the rounded rectangle.
-    float sd = length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - radius;
-    float2 signs = float2(p.x < 0.0 ? -1.0 : 1.0, p.y < 0.0 ? -1.0 : 1.0);
-    float2 normal;
-    if (q.x > 0.0 || q.y > 0.0) {
-        normal = normalize(max(q, float2(0.0))) * signs;
-    } else if (q.x > q.y) {
-        normal = float2(signs.x, 0.0);
-    } else {
-        normal = float2(0.0, signs.y);
-    }
-
-    // Smooth the bevel to avoid a harsh, stepped refraction band.
-    float edge = smoothstep(-max(bevel, 1.0), 0.0, sd);
-    float bend = edge * edge * (3.0 - 2.0 * edge);
-    float2 offset = -normal * bend * strength;
-
-    // Chromatic separation fades with the lens curvature instead of tinting the centre.
-    float chroma = dispersion * bend;
-    half red = content.eval(clampPos(coord + offset * (1.0 + chroma))).r;
-    half green = content.eval(clampPos(coord + offset)).g;
-    half blue = content.eval(clampPos(coord + offset * (1.0 - chroma))).b;
-    half3 rgb = half3(red, green, blue);
-
-    // Directional highlight on the side facing the light source.
-    float facing = max(dot(normal, normalize(lightDir)), 0.0);
-    float highlight = pow(facing, 2.4) * edge * specular;
-
-    // A restrained cool reflection is strongest at the rim and falls inward.
-    half3 coolRim = half3(0.34, 0.62, 1.0) * (rimGlow * edge * (0.25 + 0.75 * facing));
-    rgb = min(rgb + half3(highlight) + coolRim, half3(1.0));
-
-    return half4(rgb, 1.0);
-}
-"""
-
-@RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private fun lensEffect(
-    size: IntSize,
-    radiusPx: Float,
-    bevelPx: Float,
-    strengthPx: Float,
-    dispersion: Float,
-    blurPx: Float,
-    lightDir: Offset,
-    specular: Float,
-    rimGlow: Float,
-): androidx.compose.ui.graphics.RenderEffect {
-    val shader = RuntimeShader(LENS_AGSL)
-    shader.setFloatUniform("size", size.width.toFloat(), size.height.toFloat())
-    shader.setFloatUniform("radius", radiusPx.coerceAtMost(minOf(size.width, size.height) / 2f))
-    shader.setFloatUniform("bevel", bevelPx.coerceAtLeast(1f))
-    shader.setFloatUniform("strength", strengthPx.coerceAtLeast(0f))
-    shader.setFloatUniform("dispersion", dispersion.coerceIn(0f, 0.2f))
-    shader.setFloatUniform("lightDir", lightDir.x, lightDir.y)
-    shader.setFloatUniform("specular", specular.coerceIn(0f, 1f))
-    shader.setFloatUniform("rimGlow", rimGlow.coerceIn(0f, 0.35f))
-
-    val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
-    // Chain order is intentional: blur the backdrop first, then bend its pixels.
-    val effect = if (blurPx > 0.5f) {
-        RenderEffect.createChainEffect(
-            lens,
-            RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP),
-        )
-    } else {
-        lens
-    }
-    return effect.asComposeRenderEffect()
-}
-
-/**
- * A bounded wallpaper-glass surface.
+ * It draws a copy of the wallpaper, shifted so it lines up with the real one, processes that
+ * copy inside the panel's own bounds, then layers tint, reflections and an edge on top. The
+ * look comes from [material]; use the same material across surfaces so they match.
  *
- * Android 13+: backdrop blur, rounded-lens refraction and chromatic edge dispersion.
- * Android 12: backdrop blur without the AGSL lens.
- * Android 11 and below: a tinted translucent fallback.
+ * What runs depends on [LocalGlassQuality]:
+ * - Full (Android 13+): light blur, then the AGSL lens (see `GlassShader.kt`).
+ * - Reduced (Android 12, battery saver, or a shader that failed to compile): blur only.
+ * - Minimal (Android 11 and below): a darker translucent tint, no blur.
  *
- * Keep the optical effect subtle: the wallpaper should remain legible through the glass.
+ * Only the panel's own area is processed, and the shader is compiled once per panel; later
+ * parameter or size changes only rebuild a cheap render effect.
  */
 @Composable
 fun GlassPanel(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 28.dp,
-    blurRadius: Dp = 24.dp,
-    tint: Color = Color.White.copy(alpha = 0.12f),
-    refraction: Dp = 14.dp,
-    bevel: Dp = 26.dp,
-    dispersion: Float = 0.055f,
-    specular: Float = 0.28f,
-    rimGlow: Float = 0.10f,
-    lightDirection: Offset = Offset(-0.6f, -0.8f),
+    material: GlassMaterial = LocalGlassMaterial.current,
+    lightDirection: Offset = DefaultLightDirection,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     val backdrop = LocalBackdrop.current
+    val quality = LocalGlassQuality.current
     val density = LocalDensity.current
     var origin by remember { mutableStateOf(IntOffset.Zero) }
     var panelSize by remember { mutableStateOf(IntSize.Zero) }
-    val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val lensSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+
+    val blurs = quality != GlassQuality.Minimal
+    val lens = remember(quality) {
+        if (quality == GlassQuality.Full && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                LensShader()
+            } catch (e: Exception) {
+                null // Falls back to plain blur below.
+            }
+        } else {
+            null
+        }
+    }
+
+    // Strength of the edge highlights relative to the Clear preset, so the border follows
+    // the material instead of being a fixed white line.
+    val edge = (material.highlight / 0.28f).coerceIn(0f, 1.6f)
 
     Box(
         modifier
@@ -182,24 +101,26 @@ fun GlassPanel(
             .clip(shape),
     ) {
         // 1. Process a wallpaper-aligned copy only inside this panel's bounds.
-        if (blurSupported && backdrop != null && backdrop.size != IntSize.Zero) {
+        if (blurs && backdrop != null && backdrop.size != IntSize.Zero) {
+            val blurRadius = if (quality == GlassQuality.Reduced) material.blur * 0.7f else material.blur
+
             val layerModifier =
-                if (lensSupported && panelSize != IntSize.Zero) {
-                    val effect = remember(
-                        panelSize, cornerRadius, blurRadius, refraction, bevel,
-                        dispersion, specular, rimGlow, lightDirection, density,
-                    ) {
+                if (lens != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    panelSize != IntSize.Zero
+                ) {
+                    val effect = remember(panelSize, cornerRadius, material, lightDirection, density) {
                         with(density) {
-                            lensEffect(
+                            lens.effect(
                                 size = panelSize,
                                 radiusPx = cornerRadius.toPx(),
-                                bevelPx = bevel.toPx(),
-                                strengthPx = refraction.toPx(),
-                                dispersion = dispersion,
+                                bevelPx = material.thickness.toPx(),
+                                strengthPx = material.refraction.toPx(),
+                                dispersion = material.dispersion,
                                 blurPx = blurRadius.toPx() * 0.32f,
                                 lightDir = lightDirection,
-                                specular = specular,
-                                rimGlow = rimGlow,
+                                highlight = material.highlight,
+                                reflection = material.reflection,
+                                innerShade = material.innerShade,
                             )
                         }
                     }
@@ -229,15 +150,11 @@ fun GlassPanel(
             }
         }
 
-        // 2. Frost layer: a little less white keeps wallpaper colours alive.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    if (blurSupported) tint
-                    else Color(0xFF14141E).copy(alpha = 0.52f),
-                ),
-        )
+        // 2. Tint. Without real blur, sit it on a darker base so text stays readable.
+        if (!blurs) {
+            Box(Modifier.matchParentSize().background(Color(0xFF14141E).copy(alpha = 0.5f)))
+        }
+        Box(Modifier.matchParentSize().background(material.tint))
 
         // 3. Broad, soft reflection; intentionally low contrast.
         Box(
@@ -246,8 +163,8 @@ fun GlassPanel(
                 .background(
                     Brush.linearGradient(
                         colorStops = arrayOf(
-                            0.0f to Color.White.copy(alpha = 0.19f),
-                            0.34f to Color.White.copy(alpha = 0.055f),
+                            0.0f to Color.White.copy(alpha = 0.19f * edge),
+                            0.34f to Color.White.copy(alpha = 0.055f * edge),
                             1.0f to Color.Transparent,
                         ),
                         start = Offset.Zero,
@@ -271,7 +188,7 @@ fun GlassPanel(
                 ),
         )
 
-        // 5. Outer rim plus a faint inner edge creates a double-reflection cue.
+        // 5. Outer rim, plus a faint line just inside it for a double-reflection cue.
         Box(
             Modifier
                 .matchParentSize()
@@ -279,10 +196,10 @@ fun GlassPanel(
                     width = 1.dp,
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.58f),
-                            Color.White.copy(alpha = 0.12f),
-                            Color(0xFFB8D9FF).copy(alpha = 0.24f),
-                            Color.White.copy(alpha = 0.32f),
+                            Color.White.copy(alpha = 0.58f * edge),
+                            Color.White.copy(alpha = 0.12f * edge),
+                            Color(0xFFB8D9FF).copy(alpha = 0.24f * edge),
+                            Color.White.copy(alpha = 0.32f * edge),
                         ),
                         start = Offset.Zero,
                         end = Offset(480f, 640f),
@@ -293,9 +210,10 @@ fun GlassPanel(
         Box(
             Modifier
                 .matchParentSize()
+                .padding(1.dp)
                 .border(
                     width = 0.5.dp,
-                    color = Color.White.copy(alpha = 0.12f),
+                    color = Color.White.copy(alpha = 0.12f * edge),
                     shape = RoundedCornerShape((cornerRadius - 1.dp).coerceAtLeast(0.dp)),
                 ),
         )
@@ -303,3 +221,6 @@ fun GlassPanel(
         content()
     }
 }
+
+/** Light from the top-left, matching the highlight position drawn by the shader. */
+private val DefaultLightDirection = Offset(-0.6f, -0.8f)

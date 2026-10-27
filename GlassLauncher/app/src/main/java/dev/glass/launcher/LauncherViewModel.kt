@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import dev.glass.launcher.settings.LauncherSettings
 import dev.glass.launcher.wallpaper.GlassWallpaperService
 import dev.glass.launcher.wallpaper.TiltTracker
 import dev.glass.launcher.wallpaper.WallpaperStore
@@ -35,6 +36,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var drawerOpen by mutableStateOf(false)
+
+    /** Long-press menu and glass settings sheet visibility. */
+    var menuOpen by mutableStateOf(false)
+    var settingsOpen by mutableStateOf(false)
+
+    val settings = LauncherSettings(app)
 
     private val store = WallpaperStore(app)
     private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,9 +35,14 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.glass.launcher.AppEntry
+import dev.glass.launcher.ui.glass.LocalGlassMaterial
+
+/** App icon size, set in glass settings. */
+val LocalIconSize = compositionLocalOf<Dp> { 56.dp }
 
 @Composable
 fun AppDrawer(
@@ -56,8 +62,7 @@ fun AppDrawer(
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(12.dp),
         cornerRadius = 36.dp,
-        blurRadius = 32.dp,
-        tint = Color.White.copy(alpha = 0.10f),
+        material = LocalGlassMaterial.current.forOverlay(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 18.dp)) {
             BasicTextField(
@@ -109,7 +114,7 @@ fun AppIcon(
         Image(
             bitmap = app.icon,
             contentDescription = app.label,
-            modifier = Modifier.size(56.dp),
+            modifier = Modifier.size(LocalIconSize.current),
         )
         if (showLabel) {
             Text(

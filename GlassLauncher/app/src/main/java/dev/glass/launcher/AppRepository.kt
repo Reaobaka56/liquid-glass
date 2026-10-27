@@ -18,7 +18,7 @@ data class AppEntry(
 object AppRepository {
 
     /** Every launchable app except this launcher, sorted by name. Call off the main thread. */
-    fun loadApps(context: Context, iconSizePx: Int = 144): List<AppEntry> {
+    fun loadApps(context: Context, iconSizePx: Int = 192): List<AppEntry> {
         val pm = context.packageManager
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         return pm.queryIntentActivities(query, 0)
