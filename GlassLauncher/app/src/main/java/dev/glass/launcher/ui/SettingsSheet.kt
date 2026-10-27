@@ -100,7 +100,7 @@ fun GlassSettingsSheet(
                             preset = preset,
                             selected = preset == settings.preset,
                             intensity = settings.glassIntensity,
-                            onClick = { settings.setPreset(preset) },
+                            onClick = { settings.updatePreset(preset) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -111,13 +111,13 @@ fun GlassSettingsSheet(
                     label = "Glass intensity",
                     value = settings.glassIntensity,
                     range = LauncherSettings.INTENSITY_RANGE,
-                    onChange = settings::setGlassIntensity,
+                    onChange = settings::updateGlassIntensity,
                 )
                 SettingSlider(
                     label = "Icon size",
                     value = settings.iconSizeDp,
                     range = LauncherSettings.ICON_SIZE_RANGE,
-                    onChange = settings::setIconSizeDp,
+                    onChange = settings::updateIconSizeDp,
                 )
             }
         }

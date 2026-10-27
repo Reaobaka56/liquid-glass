@@ -33,17 +33,17 @@ class LauncherSettings(context: Context) {
     )
         private set
 
-    fun setPreset(value: GlassPreset) {
+    fun updatePreset(value: GlassPreset) {
         preset = value
         prefs.edit().putString(KEY_PRESET, value.name).apply()
     }
 
-    fun setGlassIntensity(value: Float) {
+    fun updateGlassIntensity(value: Float) {
         glassIntensity = value.coerceIn(INTENSITY_RANGE)
         prefs.edit().putFloat(KEY_INTENSITY, glassIntensity).apply()
     }
 
-    fun setIconSizeDp(value: Float) {
+    fun updateIconSizeDp(value: Float) {
         iconSizeDp = value.coerceIn(ICON_SIZE_RANGE)
         prefs.edit().putFloat(KEY_ICON_SIZE, iconSizeDp).apply()
     }
