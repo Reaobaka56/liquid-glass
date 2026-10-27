@@ -141,7 +141,7 @@ private fun SwipeHandle() {
 
 @Composable
 private fun Dock(apps: List<AppEntry>, onLaunch: (AppEntry) -> Unit) {
-    GlassPanel(Modifier.fillMaxWidth(), shape = RoundedCornerShape(32.dp)) {
+    GlassPanel(Modifier.fillMaxWidth(), cornerRadius = 32.dp) {
         Row(
             Modifier
                 .fillMaxWidth()

@@ -11,6 +11,7 @@ A modern, minimalist, frosted-glass Android Home Screen built natively with **Ko
 
 ## ✨ Key Features
 
+* **🔮 Liquid Glass Refraction (Android 13+):** An AGSL lens bends the wallpaper around each panel's rim, with colour fringing and a specular edge highlight. Tune `refraction`, `bevel`, `dispersion` and `specular` in `GlassPanel`.
 * **🧊 Real Backdrop Blur:** Dynamically samples and blurs wallpaper behind UI panels on Android 12+ (`RenderEffect`).
 * **📱 Minimalist Home Layout:**
   * Clean Clock & Date widget.
@@ -82,7 +83,7 @@ app/src/main/java/dev/glass/launcher/
 
 ## ⚙️ Customization & Tuning
 
-* **Adjust Blur & Opacity:** Modify `blurRadius` and `tint` properties in [`GlassPanel.kt`](app/src/main/java/dev/glass/launcher/ui/GlassPanel.kt).
+* **Adjust Blur & Opacity:** Modify `blurRadius`, `tint` and the refraction parameters in [`GlassPanel.kt`](app/src/main/java/dev/glass/launcher/ui/GlassPanel.kt).
 * **Dock App Defaults:** Change launch intent categories in [`AppRepository.kt`](app/src/main/java/dev/glass/launcher/AppRepository.kt).
 
 ---
