@@ -18,6 +18,7 @@ A modern, minimalist, frosted-glass Android Home Screen built natively with **Ko
 * **📱 Minimalist Home Layout:**
   * Clean Clock & Date widget.
   * 4-App Quick Dock (Phone, Messages, Browser, Camera defaults).
+  * Real Android home-screen widgets, added through the system widget picker, persisted per page, and vertically resizable in edit mode.
 * **🔍 Searchable Glass App Drawer:** Smooth swipe-up gesture with real-time app filtering.
 * **🖼️ Wallpaper Picker:** Long-press the home screen and pick one photo, or up to 8 for Photo Shuffle. Features a built-in Aurora gradient fallback when no photo is selected.
 * **📲 Home + Lock Wallpaper:** After picking, Android offers to set *Glass Wallpaper* (a live wallpaper) for the home and lock screens, so both show the same photo.
@@ -93,6 +94,15 @@ app/src/main/java/dev/glass/launcher/
    * Press the **Home** button on your device.
    * Select **Glass Launcher** → **Always**.
    * *(To reset: Go to System Settings > Apps > Default Apps > Home App)*
+
+### Adding home-screen widgets
+
+1. Make Glass Launcher the active Home app.
+2. Long-press an empty area of the home screen to enter edit mode.
+3. Tap **+ Add widget**, choose a provider in Android's widget picker, and approve binding or complete any provider setup when prompted.
+4. The widget is saved on the current home page. In edit mode, use **−** / **+** to adjust its height or **Remove** to detach it.
+
+Widget binding is handled by Android's `AppWidgetManager`; the launcher does not request broad permissions to read installed packages or widget data.
 
 ---
 

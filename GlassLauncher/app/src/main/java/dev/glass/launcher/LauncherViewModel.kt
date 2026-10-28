@@ -37,6 +37,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var wallpaper by mutableStateOf<ImageBitmap?>(null)
         private set
 
+    var widgets by mutableStateOf<List<HomeWidgetEntry>>(emptyList())
+        private set
+
     /** Phone tilt, each axis in -1..1. Read it inside draw lambdas so it doesn't recompose. */
     var tilt by mutableStateOf(Offset.Zero)
         private set
@@ -54,12 +57,47 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     val settings = LauncherSettings(app)
 
     private val store = WallpaperStore(app)
+    private val widgetStore = HomeWidgetStore(app)
     private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }
     private var shownPath: String? = null
 
     init {
+        widgets = widgetStore.load()
         refreshApps()
         reloadWallpaper()
+    }
+
+    fun addWidget(appWidgetId: Int, page: Int) {
+        if (widgets.any { it.appWidgetId == appWidgetId }) return
+        widgets = widgets + HomeWidgetEntry(
+            appWidgetId = appWidgetId,
+            page = page.coerceAtLeast(0),
+            heightDp = 180,
+        )
+        persistWidgets()
+    }
+
+    fun removeWidget(appWidgetId: Int) {
+        widgets = widgets.filterNot { it.appWidgetId == appWidgetId }
+        persistWidgets()
+    }
+
+    fun resizeWidget(appWidgetId: Int, deltaDp: Int) {
+        widgets = widgets.map { widget ->
+            if (widget.appWidgetId == appWidgetId) {
+                widget.copy(
+                    heightDp = (widget.heightDp + deltaDp)
+                        .coerceIn(HomeWidgetStore.MIN_HEIGHT_DP, HomeWidgetStore.MAX_HEIGHT_DP),
+                )
+            } else {
+                widget
+            }
+        }
+        persistWidgets()
+    }
+
+    private fun persistWidgets() {
+        widgetStore.save(widgets)
     }
 
     fun refreshApps() {
@@ -85,11 +123,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             dock = dockPkgs.mapNotNull { byPackage[it] }
 
             // Restore Home Pages layout or create default page
-            val savedHomeItems = withContext(Dispatchers.IO) { AppRepository.loadHomeLayout(ctx) }
-            if (savedHomeItems.isNotEmpty()) {
-                val maxPage = savedHomeItems.maxOfOrNull { it.page } ?: 0
-                val pagesList = MutableList(maxPage + 1) { mutableListOf<AppEntry>() }
-                savedHomeItems.sortedWith(compareBy({ it.page }, { it.position })).forEach { item ->
+            val savedLayout = withContext(Dispatchers.IO) { AppRepository.loadHomeLayout(ctx) }
+            if (savedLayout != null) {
+                val maxPage = savedLayout.items.maxOfOrNull { it.page } ?: 0
+                val pageCount = maxOf(savedLayout.pageCount, maxPage + 1)
+                val pagesList = MutableList(pageCount) { mutableListOf<AppEntry>() }
+                savedLayout.items.sortedWith(compareBy({ it.page }, { it.position })).forEach { item ->
                     byPackage[item.packageName]?.let { app ->
                         if (item.page in pagesList.indices) {
                             pagesList[item.page].add(app)
@@ -195,14 +234,16 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun persistHomeLayout() {
         val ctx = getApplication<Application>()
+        // Read Compose state here on the caller's thread, not inside the IO coroutine.
+        val pages = homePages
         viewModelScope.launch(Dispatchers.IO) {
             val items = mutableListOf<HomeItem>()
-            homePages.forEachIndexed { pageIdx, pageApps ->
+            pages.forEachIndexed { pageIdx, pageApps ->
                 pageApps.forEachIndexed { posIdx, app ->
                     items.add(HomeItem(app.packageName, pageIdx, posIdx))
                 }
             }
-            AppRepository.saveHomeLayout(ctx, items)
+            AppRepository.saveHomeLayout(ctx, items, pages.size)
         }
     }
 

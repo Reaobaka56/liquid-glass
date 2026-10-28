@@ -3,8 +3,11 @@ package dev.glass.launcher.wallpaper
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import java.io.File
+import java.io.IOException
 
 /**
  * The launcher's photo set, shared between the launcher UI and [GlassWallpaperService].
@@ -81,20 +84,64 @@ class WallpaperStore(context: Context) {
         prefs.edit().putInt(KEY_INDEX, 0).putLong(KEY_LAST_ADVANCE, 0L).apply()
     }
 
-    /** Decodes [file] downsampled so it is not much larger than [targetW] x [targetH]. */
+    /**
+     * Decodes [file] downsampled so it is not much larger than [targetW] x [targetH], and applies
+     * the EXIF orientation (phone photos are usually stored sideways with a rotate tag, which
+     * BitmapFactory ignores).
+     */
     fun decode(file: File, targetW: Int, targetH: Int): Bitmap? {
+        val orientation = exifOrientation(file)
+        val swapped = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
+            orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
+            orientation == ExifInterface.ORIENTATION_TRANSPOSE ||
+            orientation == ExifInterface.ORIENTATION_TRANSVERSE
+        // Stored width/height are swapped relative to what the screen will see.
+        val needW = if (swapped) targetH else targetW
+        val needH = if (swapped) targetW else targetH
+
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= targetW &&
-            bounds.outHeight / (sample * 2) >= targetH
+        while (bounds.outWidth / (sample * 2) >= needW &&
+            bounds.outHeight / (sample * 2) >= needH
         ) {
             sample *= 2
         }
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        return BitmapFactory.decodeFile(file.path, options)
+        val decoded = BitmapFactory.decodeFile(file.path, options) ?: return null
+
+        val matrix = exifMatrix(orientation) ?: return decoded
+        return try {
+            val oriented = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+            if (oriented !== decoded) decoded.recycle()
+            oriented
+        } catch (e: OutOfMemoryError) {
+            decoded // Better a sideways photo than none.
+        }
+    }
+
+    private fun exifOrientation(file: File): Int = try {
+        ExifInterface(file.path)
+            .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    } catch (e: IOException) {
+        ExifInterface.ORIENTATION_NORMAL
+    }
+
+    private fun exifMatrix(orientation: Int): Matrix? {
+        val m = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+            else -> return null
+        }
+        return m
     }
 
     private companion object {

@@ -1,6 +1,11 @@
 package dev.glass.launcher.ui
 
-import android.content.Intent
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.os.Build
+import android.os.Bundle
+import android.util.SizeF
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -56,6 +61,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -65,6 +72,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.glass.launcher.AppEntry
 import dev.glass.launcher.AppRepository
+import dev.glass.launcher.HomeWidgetEntry
+import dev.glass.launcher.HomeWidgetStore
 import dev.glass.launcher.LauncherViewModel
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
 import dev.glass.launcher.ui.glass.LocalGlassQuality
@@ -79,6 +88,10 @@ fun HomeScreen(
     vm: LauncherViewModel,
     onPickWallpaper: () -> Unit,
     onOpenCompanionPreview: () -> Unit,
+    onRequestDefaultHome: () -> Unit,
+    appWidgetHost: AppWidgetHost,
+    onAddWidget: (Int) -> Unit,
+    onRemoveWidget: (Int) -> Unit,
 ) {
     val context = LocalContext.current
     val launch: (AppEntry) -> Unit = { app ->
@@ -169,6 +182,14 @@ fun HomeScreen(
                         .navigationBarsPadding()
                         .padding(16.dp),
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { vm.settingsOpen = true }) {
+                            Text("Settings", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
                     ClockCard()
 
                     Spacer(Modifier.height(12.dp))
@@ -198,14 +219,46 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                TextButton(onClick = { onAddWidget(pagerState.currentPage) }) {
+                                    Text("+ Add widget", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(onClick = onPickWallpaper) {
+                                    Text("Wallpaper", color = Color.White)
+                                }
                                 TextButton(onClick = { vm.settingsOpen = true }) {
                                     Text("Glass settings", color = Color.White)
                                 }
                                 TextButton(onClick = onOpenCompanionPreview) {
-                                    Text("Lock screen preview", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Text("Lock preview", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(onClick = onRequestDefaultHome) {
+                                    Text("Set as default home app", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
+                    }
+
+                    vm.widgets.filter { it.page == pagerState.currentPage }.forEach { widget ->
+                        Spacer(Modifier.height(8.dp))
+                        HomeWidgetSurface(
+                            widget = widget,
+                            appWidgetHost = appWidgetHost,
+                            isEditMode = vm.isEditMode,
+                            onResize = { delta -> vm.resizeWidget(widget.appWidgetId, delta) },
+                            onRemove = { onRemoveWidget(widget.appWidgetId) },
+                        )
                     }
 
                     // Multi-page Grid Pager
@@ -354,9 +407,101 @@ fun HomeScreen(
             }
 
             if (vm.settingsOpen) {
-                GlassSettingsSheet(settings = settings, onDismiss = { vm.settingsOpen = false })
+                LauncherSettingsSheet(
+                    settings = settings,
+                    onChangeWallpaper = {
+                        vm.settingsOpen = false
+                        onPickWallpaper()
+                    },
+                    onOpenCompanionPreview = {
+                        vm.settingsOpen = false
+                        onOpenCompanionPreview()
+                    },
+                    onRequestDefaultHome = {
+                        vm.settingsOpen = false
+                        onRequestDefaultHome()
+                    },
+                    onDismiss = { vm.settingsOpen = false },
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun HomeWidgetSurface(
+    widget: HomeWidgetEntry,
+    appWidgetHost: AppWidgetHost,
+    isEditMode: Boolean,
+    onResize: (Int) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val widgetManager = remember(context) { AppWidgetManager.getInstance(context) }
+    val providerInfo = remember(widget.appWidgetId) {
+        widgetManager.getAppWidgetInfo(widget.appWidgetId)
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        if (isEditMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { onResize(-HomeWidgetStore.HEIGHT_STEP_DP) }) {
+                    Text("−", color = Color.White, fontSize = 18.sp)
+                }
+                Text(
+                    "${widget.heightDp} dp",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 12.sp,
+                )
+                TextButton(onClick = { onResize(HomeWidgetStore.HEIGHT_STEP_DP) }) {
+                    Text("+", color = Color.White, fontSize = 18.sp)
+                }
+                TextButton(onClick = onRemove) {
+                    Text("Remove", color = Color(0xFFFF6B6B))
+                }
+            }
+        }
+
+        if (providerInfo == null) {
+            Text(
+                text = "This widget is no longer available.",
+                color = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(widget.heightDp.dp)
+                    .padding(16.dp),
+            )
+        } else {
+            val widgetWidthDp = (configuration.screenWidthDp - 32).coerceAtLeast(1)
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(widget.heightDp.dp),
+                factory = { viewContext ->
+                    appWidgetHost.createView(viewContext, widget.appWidgetId, providerInfo).apply {
+                        setAppWidget(widget.appWidgetId, providerInfo)
+                    }
+                },
+                update = { hostView ->
+                    hostView.updateWidgetSize(widgetWidthDp, widget.heightDp)
+                },
+            )
+        }
+    }
+}
+
+@Suppress("DEPRECATION")
+private fun AppWidgetHostView.updateWidgetSize(widthDp: Int, heightDp: Int) {
+    val options = Bundle()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        updateAppWidgetSize(options, listOf(SizeF(widthDp.toFloat(), heightDp.toFloat())))
+    } else {
+        updateAppWidgetSize(options, widthDp, heightDp, widthDp, heightDp)
     }
 }
 

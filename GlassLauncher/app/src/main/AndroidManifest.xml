@@ -5,6 +5,9 @@
         android:name="android.software.live_wallpaper"
         android:required="false" />
 
+    <!-- Required on API 28+ for the "Uninstall" menu action (ACTION_DELETE). -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
     <!-- Lets the launcher see other apps and the default handlers used for the dock. -->
     <queries>
         <intent>
@@ -57,14 +60,6 @@
             android:name=".LockScreenCompanionActivity"
             android:exported="false"
             android:label="@string/companion_preview_label" />
-
-        <receiver
-            android:name=".LockScreenCompanionReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.SCREEN_ON" />
-            </intent-filter>
-        </receiver>
 
         <!-- Home + lock screen wallpaper with tilt parallax and Photo Shuffle. -->
         <service

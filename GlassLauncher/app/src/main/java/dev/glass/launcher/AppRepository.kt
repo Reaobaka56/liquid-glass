@@ -37,6 +37,12 @@ data class HomeItem(
     val position: Int,
 )
 
+/** Saved home grid plus how many pages exist (empty pages have no items to infer them from). */
+data class HomeLayout(
+    val items: List<HomeItem>,
+    val pageCount: Int,
+)
+
 object AppRepository {
 
     /** Every launchable app except this launcher, sorted by name. Call off the main thread. */
@@ -154,13 +160,23 @@ object AppRepository {
         return mode == AppOpsManager.MODE_ALLOWED
     }
 
+    /** Most recent first. Stored as an ordered string: a StringSet has no order. */
+    private fun loadLaunchHistory(context: Context): MutableList<String> =
+        context.getSharedPreferences("launcher_history", Context.MODE_PRIVATE)
+            .getString("launch_order", null)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            ?.toMutableList()
+            ?: mutableListOf()
+
     fun recordLocalLaunch(context: Context, packageName: String) {
-        val prefs = context.getSharedPreferences("launcher_history", Context.MODE_PRIVATE)
-        val history = prefs.getStringSet("launches", emptySet())?.toMutableList() ?: mutableListOf()
+        val history = loadLaunchHistory(context)
         history.remove(packageName)
         history.add(0, packageName)
-        val trimmed = history.take(20).toSet()
-        prefs.edit().putStringSet("launches", trimmed).apply()
+        context.getSharedPreferences("launcher_history", Context.MODE_PRIVATE)
+            .edit()
+            .putString("launch_order", history.take(20).joinToString(","))
+            .apply()
     }
 
     fun getRecentApps(context: Context, allApps: List<AppEntry>, max: Int = 5): List<AppEntry> {
@@ -181,15 +197,14 @@ object AppRepository {
                 }
             }
         }
-        val prefs = context.getSharedPreferences("launcher_history", Context.MODE_PRIVATE)
-        val history = prefs.getStringSet("launches", emptySet()) ?: emptySet()
-        return history.mapNotNull { byPkg[it] }.take(max)
+        return loadLaunchHistory(context).mapNotNull { byPkg[it] }.take(max)
     }
 
-    fun loadHomeLayout(context: Context): List<HomeItem> {
+    /** Null means nothing was ever saved; an empty layout the user left that way is not null. */
+    fun loadHomeLayout(context: Context): HomeLayout? {
         val prefs = context.getSharedPreferences("launcher_layout", Context.MODE_PRIVATE)
-        val raw = prefs.getString("home_grid", null) ?: return emptyList()
-        return raw.split(",").mapNotNull { entry ->
+        val raw = prefs.getString("home_grid", null) ?: return null
+        val items = raw.split(",").mapNotNull { entry ->
             val parts = entry.split(":")
             if (parts.size == 3) {
                 val pkg = parts[0]
@@ -198,12 +213,13 @@ object AppRepository {
                 HomeItem(pkg, page, pos)
             } else null
         }
+        return HomeLayout(items, prefs.getInt("home_page_count", 1).coerceAtLeast(1))
     }
 
-    fun saveHomeLayout(context: Context, items: List<HomeItem>) {
+    fun saveHomeLayout(context: Context, items: List<HomeItem>, pageCount: Int) {
         val prefs = context.getSharedPreferences("launcher_layout", Context.MODE_PRIVATE)
         val raw = items.joinToString(",") { "${it.packageName}:${it.page}:${it.position}" }
-        prefs.edit().putString("home_grid", raw).apply()
+        prefs.edit().putString("home_grid", raw).putInt("home_page_count", pageCount).apply()
     }
 
     fun loadDockPackages(context: Context): List<String>? {

@@ -11,14 +11,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,8 +76,11 @@ private fun MenuRow(label: String, onClick: () -> Unit) {
  * current intensity, so the chips are a live preview; the sheet itself uses the active material.
  */
 @Composable
-fun GlassSettingsSheet(
+fun LauncherSettingsSheet(
     settings: LauncherSettings,
+    onChangeWallpaper: () -> Unit,
+    onOpenCompanionPreview: () -> Unit,
+    onRequestDefaultHome: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Scrim(onDismiss, contentAlignment = Alignment.BottomCenter) {
@@ -81,15 +88,22 @@ fun GlassSettingsSheet(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .fillMaxHeight(0.85f)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(12.dp)
                 // Keep touches on the sheet from reaching the scrim and closing it.
                 .pointerInput(Unit) { detectTapGestures { } },
             cornerRadius = 32.dp,
         ) {
-            Column(Modifier.padding(20.dp)) {
-                Text("Glass", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Column(
+                Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text("Settings", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(16.dp))
+                Text("Glass appearance", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                Spacer(Modifier.height(10.dp))
 
                 Row(
                     Modifier.fillMaxWidth(),
@@ -119,6 +133,18 @@ fun GlassSettingsSheet(
                     range = LauncherSettings.ICON_SIZE_RANGE,
                     onChange = settings::updateIconSizeDp,
                 )
+
+                Spacer(Modifier.height(12.dp))
+                Text("Launcher", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                TextButton(onClick = onChangeWallpaper, modifier = Modifier.fillMaxWidth()) {
+                    Text("Change wallpaper", color = Color.White)
+                }
+                TextButton(onClick = onOpenCompanionPreview, modifier = Modifier.fillMaxWidth()) {
+                    Text("Lock screen preview", color = Color.White)
+                }
+                TextButton(onClick = onRequestDefaultHome, modifier = Modifier.fillMaxWidth()) {
+                    Text("Set as default home app", color = Color.White)
+                }
             }
         }
     }

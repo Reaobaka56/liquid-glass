@@ -41,7 +41,13 @@ class GlassWallpaperService : WallpaperService() {
         private var width = 0
         private var height = 0
         private var bitmap: Bitmap? = null
-        private var loadedPath: String? = null
+
+        // path + mtime: picking new photos rewrites 000.img in place, so the path alone never changes.
+        private var loadedKey: String? = null
+
+        // Set when the photo may have changed (wake, screen off, resize). Without it the photo
+        // directory was listed and sorted on every frame while tilting.
+        private var sourceDirty = true
 
         private var visible = false
         private var framePending = false
@@ -61,6 +67,7 @@ class GlassWallpaperService : WallpaperService() {
             override fun onReceive(context: Context, intent: Intent) {
                 // Step to the next photo as the screen locks, so it is ready for the next wake.
                 store.advanceIfDue()
+                sourceDirty = true
             }
         }
 
@@ -82,7 +89,8 @@ class GlassWallpaperService : WallpaperService() {
             if (w != width || h != height) {
                 width = w
                 height = h
-                loadedPath = null // re-decode at the new size
+                loadedKey = null // re-decode at the new size
+                sourceDirty = true
             }
             requestFrame()
         }
@@ -90,6 +98,7 @@ class GlassWallpaperService : WallpaperService() {
         override fun onVisibilityChanged(visible: Boolean) {
             this.visible = visible
             if (visible) {
+                sourceDirty = true // photos may have been replaced while hidden
                 tilt.start()
                 requestFrame()
             } else {
@@ -120,15 +129,19 @@ class GlassWallpaperService : WallpaperService() {
         }
 
         private fun ensureBitmap() {
+            if (!sourceDirty || width == 0 || height == 0) return
+            sourceDirty = false
+
             val file = store.current()
             if (file == null) {
                 bitmap = null
-                loadedPath = null
+                loadedKey = null
                 return
             }
-            if (file.path == loadedPath || width == 0 || height == 0) return
+            val key = "${file.path}:${file.lastModified()}"
+            if (key == loadedKey) return
             bitmap = store.decode(file, width, height)
-            loadedPath = file.path
+            loadedKey = key
         }
 
         private fun draw() {
