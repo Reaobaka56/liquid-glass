@@ -217,6 +217,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             pages.removeAt(pageIndex)
             homePages = pages
             persistHomeLayout()
+
+            // Widgets on later pages move down with them. Widgets on the removed page are
+            // detached by the caller (it also has to free their host ids).
+            widgets = widgets.map { if (it.page > pageIndex) it.copy(page = it.page - 1) else it }
+            persistWidgets()
         }
     }
 

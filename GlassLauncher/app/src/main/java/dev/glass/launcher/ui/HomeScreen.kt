@@ -206,7 +206,13 @@ fun HomeScreen(
                                     Text("+ Page", color = Color.White, fontWeight = FontWeight.Bold)
                                 }
                                 if (vm.homePages.size > 1) {
-                                    TextButton(onClick = { vm.removeHomePage(pagerState.currentPage) }) {
+                                    TextButton(onClick = {
+                                        val page = pagerState.currentPage
+                                        // Detach this page's widgets first so their host ids are freed.
+                                        vm.widgets.filter { it.page == page }
+                                            .forEach { onRemoveWidget(it.appWidgetId) }
+                                        vm.removeHomePage(page)
+                                    }) {
                                         Text("Remove page", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
                                     }
                                 }

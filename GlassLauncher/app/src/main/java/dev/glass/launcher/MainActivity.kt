@@ -78,18 +78,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    private val configureWidget =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == RESULT_OK && pendingWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
-                vm.addWidget(pendingWidgetId, pendingWidgetPage)
-                clearPendingWidget()
-            } else {
-                deletePendingWidget()
-            }
-        }
+    // The role dialog needs a real startActivityForResult (it reads the calling package).
+    private val requestHomeRole =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The widget picker is another app, so we can be killed while it is open.
+        pendingWidgetId = savedInstanceState?.getInt(STATE_WIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+            ?: AppWidgetManager.INVALID_APPWIDGET_ID
+        pendingWidgetPage = savedInstanceState?.getInt(STATE_WIDGET_PAGE, 0) ?: 0
         enableEdgeToEdge()
         setContent {
             HomeScreen(
@@ -136,6 +134,25 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_WIDGET_ID, pendingWidgetId)
+        outState.putInt(STATE_WIDGET_PAGE, pendingWidgetPage)
+    }
+
+    @Suppress("DEPRECATION")
+    @Deprecated("Needed for AppWidgetHost.startAppWidgetConfigureActivityForResult")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_CONFIGURE_WIDGET) return
+        if (resultCode == RESULT_OK && pendingWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            vm.addWidget(pendingWidgetId, pendingWidgetPage)
+            clearPendingWidget()
+        } else {
+            deletePendingWidget()
+        }
+    }
+
     private fun pickHomeWidget(page: Int) {
         pendingWidgetId = appWidgetHost.allocateAppWidgetId()
         pendingWidgetPage = page
@@ -161,12 +178,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE)
-            .setComponent(configureActivity)
-            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+        // Launch through the host: config activities are often not exported, so starting the
+        // component directly throws SecurityException for them.
         try {
-            configureWidget.launch(intent)
+            appWidgetHost.startAppWidgetConfigureActivityForResult(
+                this, widgetId, 0, REQUEST_CONFIGURE_WIDGET, null,
+            )
         } catch (e: ActivityNotFoundException) {
+            failPendingWidget("The widget's setup screen could not be opened.")
+        } catch (e: SecurityException) {
             failPendingWidget("The widget's setup screen could not be opened.")
         }
     }
@@ -207,17 +227,20 @@ class MainActivity : ComponentActivity() {
 
     private fun requestDefaultHome() {
         val roleManager = getSystemService(RoleManager::class.java)
-        val intent = if (
-            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+        val roleAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
             roleManager?.isRoleAvailable(RoleManager.ROLE_HOME) == true
-        ) {
+        if (roleAvailable && roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
+            Toast.makeText(this, "Glass Launcher is already your home app.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = if (roleAvailable) {
             roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME)
         } else {
             Intent(Settings.ACTION_HOME_SETTINGS)
         }
 
         try {
-            startActivity(intent)
+            requestHomeRole.launch(intent)
         } catch (e: ActivityNotFoundException) {
             Toast.makeText(this, "Open system Home settings to choose Glass Launcher.", Toast.LENGTH_LONG).show()
         }
@@ -233,6 +256,9 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val APP_WIDGET_HOST_ID = 0x474C
+        const val REQUEST_CONFIGURE_WIDGET = 0x474D
+        const val STATE_WIDGET_ID = "pending_widget_id"
+        const val STATE_WIDGET_PAGE = "pending_widget_page"
         const val MAX_PHOTOS = 8
     }
 }
