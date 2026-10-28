@@ -2,4 +2,5 @@
 <resources>
     <string name="wallpaper_label">Glass Wallpaper</string>
     <string name="wallpaper_description">Tilt-reactive photo wallpaper with Photo Shuffle</string>
+    <string name="companion_preview_label">Lock screen companion preview</string>
 </resources>

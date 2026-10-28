@@ -78,6 +78,7 @@ import java.time.format.DateTimeFormatter
 fun HomeScreen(
     vm: LauncherViewModel,
     onPickWallpaper: () -> Unit,
+    onOpenCompanionPreview: () -> Unit,
 ) {
     val context = LocalContext.current
     val launch: (AppEntry) -> Unit = { app ->
@@ -174,27 +175,35 @@ fun HomeScreen(
 
                     // Edit Mode Header Controls
                     if (vm.isEditMode) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(onClick = { vm.addHomePages() }) {
-                                Text("+ Page", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                            if (vm.homePages.size > 1) {
-                                TextButton(onClick = { vm.removeHomePage(pagerState.currentPage) }) {
-                                    Text("Remove Page", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
+                        Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(onClick = { vm.addHomePages() }) {
+                                    Text("+ Page", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                                if (vm.homePages.size > 1) {
+                                    TextButton(onClick = { vm.removeHomePage(pagerState.currentPage) }) {
+                                        Text("Remove page", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                TextButton(onClick = { vm.isEditMode = false }) {
+                                    Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            Button(
-                                onClick = { vm.isEditMode = false },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.25f)),
-                                shape = RoundedCornerShape(16.dp),
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
+                                TextButton(onClick = { vm.settingsOpen = true }) {
+                                    Text("Glass settings", color = Color.White)
+                                }
+                                TextButton(onClick = onOpenCompanionPreview) {
+                                    Text("Lock screen preview", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }

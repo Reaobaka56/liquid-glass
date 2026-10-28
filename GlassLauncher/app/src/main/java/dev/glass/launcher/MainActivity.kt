@@ -35,6 +35,9 @@ class MainActivity : ComponentActivity() {
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
+                onOpenCompanionPreview = {
+                    startActivity(Intent(this, LockScreenCompanionActivity::class.java))
+                },
             )
         }
     }
