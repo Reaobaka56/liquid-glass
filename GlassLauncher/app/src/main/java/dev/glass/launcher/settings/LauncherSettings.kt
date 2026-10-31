@@ -33,6 +33,15 @@ class LauncherSettings(context: Context) {
     )
         private set
 
+    /** Draw an iOS-style status bar on the home screen and hide the system one there. */
+    var iosStatusBar by mutableStateOf(prefs.getBoolean(KEY_IOS_STATUS_BAR, true))
+        private set
+
+    fun updateIosStatusBar(value: Boolean) {
+        iosStatusBar = value
+        prefs.edit().putBoolean(KEY_IOS_STATUS_BAR, value).apply()
+    }
+
     fun updatePreset(value: GlassPreset) {
         preset = value
         prefs.edit().putString(KEY_PRESET, value.name).apply()
@@ -59,5 +68,6 @@ class LauncherSettings(context: Context) {
         private const val KEY_PRESET = "glass_preset"
         private const val KEY_INTENSITY = "glass_intensity"
         private const val KEY_ICON_SIZE = "icon_size_dp"
+        private const val KEY_IOS_STATUS_BAR = "ios_status_bar"
     }
 }
