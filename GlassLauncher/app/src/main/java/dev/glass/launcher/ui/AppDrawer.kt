@@ -2,8 +2,13 @@ package dev.glass.launcher.ui
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -49,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import dev.glass.launcher.AppEntry
 import dev.glass.launcher.AppRepository
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
+import dev.glass.launcher.ui.glass.LocalReduceMotion
 import kotlinx.coroutines.launch
 
 /** App icon size, set in glass settings. */
@@ -178,6 +185,7 @@ fun AppDrawer(
             .padding(8.dp),
         cornerRadius = 32.dp,
         material = LocalGlassMaterial.current.forOverlay(),
+        interactive = false, // Full-screen: no finger bulge or squish while scrolling.
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.padding(horizontal = 12.dp, vertical = 14.dp)) {
@@ -369,10 +377,25 @@ fun AppIcon(
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    // Springy press: shrinks fast, then rebounds with a little overshoot on release.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val reduceMotion = LocalReduceMotion.current
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && !reduceMotion) 0.86f else 1f,
+        animationSpec = spring(dampingRatio = 0.42f, stiffness = 420f),
+        label = "iconPress",
+    )
     Column(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .clip(RoundedCornerShape(16.dp))
             .combinedClickable(
+                interactionSource = interaction,
+                indication = LocalIndication.current,
                 onClick = onClick,
                 onLongClick = onLongClick,
             )

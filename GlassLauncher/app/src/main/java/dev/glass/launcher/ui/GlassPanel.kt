@@ -1,6 +1,8 @@
 package dev.glass.launcher.ui
 
 import android.os.Build
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +25,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -35,6 +40,7 @@ import dev.glass.launcher.ui.glass.GlassQuality
 import dev.glass.launcher.ui.glass.LensShader
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
 import dev.glass.launcher.ui.glass.LocalGlassQuality
+import dev.glass.launcher.ui.glass.LocalReduceMotion
 import dev.glass.launcher.ui.glass.GlassMaterial
 import kotlin.math.roundToInt
 
@@ -52,6 +58,14 @@ import kotlin.math.roundToInt
  *
  * Only the panel's own area is processed, and the shader is compiled once per panel; later
  * parameter or size changes only rebuild a cheap render effect.
+ *
+ * Motion (skipped under [LocalReduceMotion]):
+ * - The specular light direction follows the phone's tilt.
+ * - If [interactive], touching the panel runs a spring: the lens inflates (more refraction,
+ *   thicker rim), the backdrop bulges toward the finger with a soft glow, and the whole panel
+ *   squishes slightly, then jellies back past its resting size on release. Touches are only
+ *   observed, never consumed, so children behave as before. Use `interactive = false` for
+ *   large surfaces (drawer, sheets) where that would look wrong.
  */
 @Composable
 fun GlassPanel(
@@ -59,14 +73,52 @@ fun GlassPanel(
     cornerRadius: Dp = 28.dp,
     material: GlassMaterial = LocalGlassMaterial.current,
     lightDirection: Offset = DefaultLightDirection,
+    interactive: Boolean = true,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     val backdrop = LocalBackdrop.current
     val quality = LocalGlassQuality.current
+    val reduceMotion = LocalReduceMotion.current
     val density = LocalDensity.current
     var origin by remember { mutableStateOf(IntOffset.Zero) }
     var panelSize by remember { mutableStateOf(IntSize.Zero) }
+
+    // 0 at rest, 1 while pressed. Springs overshoot, which is what makes release feel liquid.
+    val reactive = interactive && !reduceMotion
+    var pressed by remember { mutableStateOf(false) }
+    var touchPoint by remember { mutableStateOf(Offset.Zero) }
+    val press = remember { Animatable(0f) }
+    LaunchedEffect(pressed, reactive) {
+        val down = pressed && reactive
+        press.animateTo(
+            targetValue = if (down) 1f else 0f,
+            animationSpec = if (down) {
+                spring<Float>(dampingRatio = 0.8f, stiffness = 700f)
+            } else {
+                spring<Float>(dampingRatio = 0.4f, stiffness = 300f)
+            },
+        )
+    }
+    val touchObserver = if (reactive) {
+        Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    // Initial pass and no consume(): watch the finger without stealing it.
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val active = event.changes.firstOrNull { it.pressed }
+                    if (active != null) {
+                        touchPoint = active.position
+                        pressed = true
+                    } else {
+                        pressed = false
+                    }
+                }
+            }
+        }
+    } else {
+        Modifier
+    }
 
     val blurs = quality != GlassQuality.Minimal
     val lens = remember(quality) {
@@ -87,6 +139,13 @@ fun GlassPanel(
 
     Box(
         modifier
+            .graphicsLayer {
+                // Squish on press; the release spring overshoots, so it briefly swells.
+                val s = 1f - PRESS_SQUISH * press.value
+                scaleX = s
+                scaleY = s
+            }
+            .then(touchObserver)
             .onGloballyPositioned { coords ->
                 val p = coords.positionInRoot()
                 origin = IntOffset(p.x.roundToInt(), p.y.roundToInt())
@@ -108,24 +167,38 @@ fun GlassPanel(
                 if (lens != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     panelSize != IntSize.Zero
                 ) {
-                    val effect = remember(panelSize, cornerRadius, material, lightDirection, density) {
-                        with(density) {
-                            lens.effect(
-                                size = panelSize,
-                                radiusPx = cornerRadius.toPx(),
-                                bevelPx = material.thickness.toPx(),
-                                strengthPx = material.refraction.toPx(),
-                                dispersion = material.dispersion,
-                                blurPx = blurRadius.toPx() * 0.32f,
-                                lightDir = lightDirection,
-                                highlight = material.highlight,
-                                reflection = material.reflection,
-                                innerShade = material.innerShade,
-                            )
-                        }
+                    val cornerPx = with(density) { cornerRadius.toPx() }
+                    val thicknessPx = with(density) { material.thickness.toPx() }
+                    val refractionPx = with(density) { material.refraction.toPx() }
+                    val blurPx = with(density) { blurRadius.toPx() } * 0.32f
+                    val touchRadiusPx = with(density) {
+                        (minOf(panelSize.width, panelSize.height) * 0.9f)
+                            .coerceIn(56.dp.toPx(), 150.dp.toPx())
                     }
+                    // Built inside the layer block so the spring and tilt (both state) only
+                    // invalidate this layer, never recompose the panel. The shader itself is
+                    // compiled once; this just updates uniforms and wraps a cheap effect.
                     Modifier.graphicsLayer {
-                        renderEffect = effect
+                        val p = press.value.coerceAtLeast(0f)
+                        val tilt = if (reduceMotion) Offset.Zero else backdrop.tilt()
+                        renderEffect = lens.effect(
+                            size = panelSize,
+                            radiusPx = cornerPx,
+                            bevelPx = thicknessPx * (1f + 0.3f * p),
+                            strengthPx = refractionPx * (1f + 0.9f * p),
+                            dispersion = material.dispersion * (1f + 0.5f * p),
+                            blurPx = blurPx,
+                            lightDir = Offset(
+                                lightDirection.x + tilt.x * TILT_LIGHT,
+                                lightDirection.y + tilt.y * TILT_LIGHT,
+                            ),
+                            highlight = material.highlight * (1f + 0.4f * p),
+                            reflection = material.reflection,
+                            innerShade = material.innerShade,
+                            touch = touchPoint,
+                            touchAmount = p,
+                            touchRadiusPx = touchRadiusPx,
+                        )
                         clip = true
                     }
                 } else {
@@ -224,3 +297,9 @@ fun GlassPanel(
 
 /** Light from the top-left, matching the highlight position drawn by the shader. */
 private val DefaultLightDirection = Offset(-0.6f, -0.8f)
+
+/** How far the panel shrinks at full press (fraction of its size). */
+private const val PRESS_SQUISH = 0.02f
+
+/** How far tilt (-1..1) swings the light direction. Negate it if the highlight moves the wrong way. */
+private const val TILT_LIGHT = 0.9f
