@@ -1,5 +1,6 @@
 package dev.glass.launcher
 
+import android.annotation.SuppressLint
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.app.WallpaperManager
@@ -18,6 +19,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import dev.glass.launcher.ui.HomeScreen
 import dev.glass.launcher.wallpaper.GlassWallpaperService
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.nio.charset.StandardCharsets
 
 class MainActivity : ComponentActivity() {
 
@@ -26,11 +30,109 @@ class MainActivity : ComponentActivity() {
     private val appWidgetManager by lazy { AppWidgetManager.getInstance(this) }
     private var pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
     private var pendingWidgetPage = 0
+    private var applyRequested = false
+    private var awaitingWallpaperConfirmation = false
+    private var pendingCustomIconPackage: String? = null
+    private var pendingIconCollectionExport: String? = null
 
     // Pick one photo for a plain wallpaper, or several for Photo Shuffle.
     private val pickImages =
         registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PHOTOS)) { uris ->
-            if (uris.isNotEmpty()) vm.setWallpapers(uris) { offerLiveWallpaper() }
+            if (uris.isNotEmpty()) {
+                vm.setWallpapers(uris) { saved ->
+                    if (saved) {
+                        offerLiveWallpaper()
+                    } else {
+                        applyRequested = false
+                        Toast.makeText(
+                            this,
+                            "The selected wallpaper could not be saved. Your current wallpaper was kept.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            } else if (applyRequested) {
+                applyRequested = false
+                Toast.makeText(this, "No wallpaper was selected; nothing was applied.", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val pickForeground =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) {
+                vm.setForeground(uri) { saved ->
+                    if (!saved) {
+                        Toast.makeText(
+                            this,
+                            "Could not save that foreground image. The previous layer was kept.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+        }
+
+    private val pickCustomIcon =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            val packageName = pendingCustomIconPackage
+            pendingCustomIconPackage = null
+            if (uri != null && packageName != null) {
+                vm.applyCustomIcon(packageName, uri) { saved ->
+                    if (!saved) Toast.makeText(this, "Could not apply that image as the app icon.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+    private val exportIconCollection =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            val serialized = pendingIconCollectionExport
+            pendingIconCollectionExport = null
+            if (uri == null || serialized == null) return@registerForActivityResult
+            try {
+                contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { writer ->
+                    writer.write(serialized)
+                } ?: throw IOException("Could not open the selected export destination.")
+                Toast.makeText(this, "Icon collection exported.", Toast.LENGTH_LONG).show()
+            } catch (e: IOException) {
+                Toast.makeText(this, e.message ?: "Could not export the icon collection.", Toast.LENGTH_LONG).show()
+            } catch (e: SecurityException) {
+                Toast.makeText(this, "Access to the selected export destination was denied.", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val importIconCollection =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                val serialized = contentResolver.openInputStream(uri)?.use { input ->
+                    val content = ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        total += read
+                        if (total > 12 * 1024 * 1024) {
+                            throw IOException("The selected icon collection is larger than 12 MB.")
+                        }
+                        content.write(buffer, 0, read)
+                    }
+                    content.toString(StandardCharsets.UTF_8.name())
+                }
+                    ?: throw IOException("Could not open the selected collection file.")
+                vm.importIconCollection(serialized) { success, message ->
+                    Toast.makeText(
+                        this,
+                        if (success) "Icon collection restored."
+                        else message ?: "Could not restore the icon collection.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            } catch (e: IOException) {
+                Toast.makeText(this, e.message ?: "Could not read the icon collection.", Toast.LENGTH_LONG).show()
+            } catch (e: SecurityException) {
+                Toast.makeText(this, "Access to the selected collection file was denied.", Toast.LENGTH_LONG).show()
+            }
         }
 
     private val pickWidget =
@@ -80,7 +182,44 @@ class MainActivity : ComponentActivity() {
 
     // The role dialog needs a real startActivityForResult (it reads the calling package).
     private val requestHomeRole =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (isDefaultHome()) {
+                if (applyRequested && vm.liveWallpaperActive()) {
+                    Toast.makeText(
+                        this,
+                        "Applied: Glass Launcher is the default home app and Glass Wallpaper is active.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                } else {
+                    Toast.makeText(this, "Glass Launcher is now the default home app.", Toast.LENGTH_LONG).show()
+                }
+                applyRequested = false
+            } else if (applyRequested) {
+                applyRequested = false
+                Toast.makeText(
+                    this,
+                    "The launcher was not changed. Select Glass Launcher in Android's Home app settings.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+
+    private val requestCalendarPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            vm.refreshCalendarEvents()
+            if (!granted) {
+                Toast.makeText(this, "Calendar events remain hidden until calendar access is allowed.", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    private val requestWeatherLocation =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                vm.refreshWeather()
+            } else {
+                Toast.makeText(this, "Weather needs approximate location to load local conditions.", Toast.LENGTH_LONG).show()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +227,9 @@ class MainActivity : ComponentActivity() {
         pendingWidgetId = savedInstanceState?.getInt(STATE_WIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
             ?: AppWidgetManager.INVALID_APPWIDGET_ID
         pendingWidgetPage = savedInstanceState?.getInt(STATE_WIDGET_PAGE, 0) ?: 0
+        applyRequested = savedInstanceState?.getBoolean(STATE_APPLY_REQUESTED, false) ?: false
+        awaitingWallpaperConfirmation =
+            savedInstanceState?.getBoolean(STATE_WALLPAPER_CONFIRMATION, false) ?: false
         enableEdgeToEdge()
         setContent {
             HomeScreen(
@@ -97,15 +239,50 @@ class MainActivity : ComponentActivity() {
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
+                onPickForeground = {
+                    pickForeground.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
                 onOpenCompanionPreview = {
                     startActivity(Intent(this, LockScreenCompanionActivity::class.java))
                 },
+                onApplyTheme = ::applySupportedTheme,
                 onRequestDefaultHome = ::requestDefaultHome,
                 appWidgetHost = appWidgetHost,
                 onAddWidget = ::pickHomeWidget,
                 onRemoveWidget = { widgetId ->
                     vm.removeWidget(widgetId)
                     appWidgetHost.deleteAppWidgetId(widgetId)
+                },
+                onAddBuiltInWidget = { type, page -> vm.addBuiltInWidget(type, page) },
+                onRequestCalendarPermission = {
+                    requestCalendarPermission.launch(android.Manifest.permission.READ_CALENDAR)
+                },
+                onRequestWeatherPermission = {
+                    requestWeatherLocation.launch(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                },
+                onRefreshWeather = vm::refreshWeather,
+                onOpenMediaAccessSettings = ::openMediaAccessSettings,
+                onPickCustomIcon = { packageName ->
+                    pendingCustomIconPackage = packageName
+                    pickCustomIcon.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                onExportIconCollection = { name ->
+                    vm.exportIconCollection(name) { serialized, error ->
+                        if (serialized == null) {
+                            Toast.makeText(this, error ?: "Could not export the icon collection.", Toast.LENGTH_LONG).show()
+                        } else {
+                            pendingIconCollectionExport = serialized
+                            val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+                            exportIconCollection.launch("$safeName.json")
+                        }
+                    }
+                },
+                onImportIconCollection = {
+                    importIconCollection.launch(arrayOf("application/json", "text/json"))
                 },
             )
         }
@@ -115,6 +292,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         appWidgetHost.startListening()
         vm.refreshApps()
+        vm.refreshCalendarEvents()
         // The wallpaper service may have moved to the next shuffle photo while the screen was off.
         vm.reloadWallpaper()
     }
@@ -122,6 +300,23 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         vm.startTilt()
+        if (awaitingWallpaperConfirmation) {
+            awaitingWallpaperConfirmation = false
+            if (vm.liveWallpaperActive()) {
+                if (applyRequested) {
+                    requestDefaultHome()
+                } else {
+                    Toast.makeText(this, "Glass Wallpaper is active as the system wallpaper.", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                applyRequested = false
+                Toast.makeText(
+                    this,
+                    "Wallpaper was not applied. Android keeps the current system wallpaper.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     override fun onPause() {
@@ -138,6 +333,8 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         outState.putInt(STATE_WIDGET_ID, pendingWidgetId)
         outState.putInt(STATE_WIDGET_PAGE, pendingWidgetPage)
+        outState.putBoolean(STATE_APPLY_REQUESTED, applyRequested)
+        outState.putBoolean(STATE_WALLPAPER_CONFIRMATION, awaitingWallpaperConfirmation)
     }
 
     @Suppress("DEPRECATION")
@@ -220,17 +417,45 @@ class MainActivity : ComponentActivity() {
         )
         try {
             startActivity(intent)
+            awaitingWallpaperConfirmation = true
         } catch (e: ActivityNotFoundException) {
-            // Device has no live wallpaper support; the home screen still uses the photo.
+            applyRequested = false
+            Toast.makeText(
+                this,
+                "This device does not provide a live-wallpaper picker. The launcher preview still uses your photo.",
+                Toast.LENGTH_LONG,
+            ).show()
+        } catch (e: SecurityException) {
+            awaitingWallpaperConfirmation = false
+            applyRequested = false
+            Toast.makeText(this, "Android denied access to the live-wallpaper picker.", Toast.LENGTH_LONG).show()
         }
     }
 
+    private fun applySupportedTheme() {
+        applyRequested = true
+        when {
+            !vm.hasSavedWallpaper() -> pickImages.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+            !vm.liveWallpaperActive() -> offerLiveWallpaper()
+            else -> requestDefaultHome()
+        }
+    }
+
+    @SuppressLint("NewApi")
     private fun requestDefaultHome() {
         val roleManager = getSystemService(RoleManager::class.java)
         val roleAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
             roleManager?.isRoleAvailable(RoleManager.ROLE_HOME) == true
         if (roleAvailable && roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
-            Toast.makeText(this, "Glass Launcher is already your home app.", Toast.LENGTH_SHORT).show()
+            val message = if (applyRequested && vm.liveWallpaperActive()) {
+                "Already applied: Glass Launcher is the default home app and Glass Wallpaper is active."
+            } else {
+                "Glass Launcher is already the default home app."
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            applyRequested = false
             return
         }
         val intent = if (roleAvailable) {
@@ -242,8 +467,34 @@ class MainActivity : ComponentActivity() {
         try {
             requestHomeRole.launch(intent)
         } catch (e: ActivityNotFoundException) {
+            applyRequested = false
             Toast.makeText(this, "Open system Home settings to choose Glass Launcher.", Toast.LENGTH_LONG).show()
+        } catch (e: SecurityException) {
+            applyRequested = false
+            Toast.makeText(this, "Android denied access to Home app settings.", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun openMediaAccessSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "Open Android Settings > Notification access to enable media controls.", Toast.LENGTH_LONG).show()
+        } catch (e: SecurityException) {
+            Toast.makeText(this, "Android denied access to Notification access settings.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @SuppressLint("NewApi")
+    private fun isDefaultHome(): Boolean {
+        val roleManager = getSystemService(RoleManager::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+            roleManager?.isRoleAvailable(RoleManager.ROLE_HOME) == true
+        ) {
+            return roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+        }
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        return packageManager.resolveActivity(homeIntent, 0)?.activityInfo?.packageName == packageName
     }
 
     /** Pressing the Home button while the drawer is open closes it. */
@@ -259,6 +510,8 @@ class MainActivity : ComponentActivity() {
         const val REQUEST_CONFIGURE_WIDGET = 0x474D
         const val STATE_WIDGET_ID = "pending_widget_id"
         const val STATE_WIDGET_PAGE = "pending_widget_page"
+        const val STATE_APPLY_REQUESTED = "apply_requested"
+        const val STATE_WALLPAPER_CONFIRMATION = "wallpaper_confirmation"
         const val MAX_PHOTOS = 8
     }
 }

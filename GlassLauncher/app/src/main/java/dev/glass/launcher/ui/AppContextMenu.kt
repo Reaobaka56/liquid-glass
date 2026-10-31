@@ -107,10 +107,12 @@ fun AppContextMenu(
                     .scale(1.15f)
                     .padding(bottom = 16.dp),
             ) {
-                Image(
-                    bitmap = app.icon,
-                    contentDescription = app.label,
-                    modifier = Modifier.size(64.dp),
+                AppIconArtwork(
+                    original = app.icon,
+                    label = app.label,
+                    assignment = app.iconAssignment,
+                    customIcon = app.customIcon,
+                    size = 64.dp,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(

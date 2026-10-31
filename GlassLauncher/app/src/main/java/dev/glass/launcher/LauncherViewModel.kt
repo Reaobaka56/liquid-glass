@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.WallpaperManager
 import android.content.ComponentName
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,9 @@ import dev.glass.launcher.settings.LauncherSettings
 import dev.glass.launcher.wallpaper.GlassWallpaperService
 import dev.glass.launcher.wallpaper.TiltTracker
 import dev.glass.launcher.wallpaper.WallpaperStore
+import java.io.IOException
+import org.json.JSONException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,6 +27,12 @@ import kotlinx.coroutines.withContext
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     var apps by mutableStateOf<List<AppEntry>>(emptyList())
+        private set
+
+    var iconPackCandidates by mutableStateOf<List<IconPackCandidate>>(emptyList())
+        private set
+
+    var iconCollections by mutableStateOf<List<IconCollection>>(emptyList())
         private set
 
     var dock by mutableStateOf<List<AppEntry>>(emptyList())
@@ -37,7 +47,25 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var wallpaper by mutableStateOf<ImageBitmap?>(null)
         private set
 
+    var foregroundWallpaper by mutableStateOf<ImageBitmap?>(null)
+        private set
+
     var widgets by mutableStateOf<List<HomeWidgetEntry>>(emptyList())
+        private set
+
+    var builtInWidgets by mutableStateOf<List<BuiltInWidgetEntry>>(emptyList())
+        private set
+
+    var calendarEvents by mutableStateOf<List<CalendarEvent>>(emptyList())
+        private set
+
+    var weather by mutableStateOf<WeatherSnapshot?>(null)
+        private set
+
+    var weatherLoading by mutableStateOf(false)
+        private set
+
+    var weatherError by mutableStateOf<String?>(null)
         private set
 
     /** Phone tilt, each axis in -1..1. Read it inside draw lambdas so it doesn't recompose. */
@@ -52,19 +80,99 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var selectedMenuApp by mutableStateOf<AppEntry?>(null)
     var selectedMenuShortcuts by mutableStateOf<List<AppShortcut>>(emptyList())
     var settingsOpen by mutableStateOf(false)
+    var clockEditorOpen by mutableStateOf(false)
+    var wallpaperEditorOpen by mutableStateOf(false)
+    var iconEditorOpen by mutableStateOf(false)
     var showUsagePermissionDialog by mutableStateOf(false)
 
     val settings = LauncherSettings(app)
 
     private val store = WallpaperStore(app)
     private val widgetStore = HomeWidgetStore(app)
+    private val builtInWidgetStore = BuiltInWidgetStore(app)
+    private val iconAssignmentStore = IconAssignmentStore(app)
     private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }
     private var shownPath: String? = null
+    private var shownForegroundPath: String? = null
 
     init {
         widgets = widgetStore.load()
+        builtInWidgets = builtInWidgetStore.load()
+        reloadIconCollections()
         refreshApps()
         reloadWallpaper()
+        refreshCalendarEvents()
+        if (builtInWidgets.any { it.type == BuiltInWidgetType.WEATHER }) refreshWeather()
+    }
+
+    fun addBuiltInWidget(type: BuiltInWidgetType, page: Int) {
+        builtInWidgets = builtInWidgets + BuiltInWidgetEntry(
+            id = BuiltInWidgetStore.newId(),
+            type = type,
+            page = page.coerceAtLeast(0),
+            size = BuiltInWidgetSize.MEDIUM,
+        )
+        persistBuiltInWidgets()
+        if (type == BuiltInWidgetType.CALENDAR) refreshCalendarEvents()
+    }
+
+    fun removeBuiltInWidget(id: String) {
+        builtInWidgets = builtInWidgets.filterNot { it.id == id }
+        persistBuiltInWidgets()
+    }
+
+    fun resizeBuiltInWidget(id: String, delta: Int) {
+        val sizes = BuiltInWidgetSize.entries
+        builtInWidgets = builtInWidgets.map { widget ->
+            if (widget.id != id) return@map widget
+            val index = sizes.indexOf(widget.size)
+            widget.copy(size = sizes[(index + delta).coerceIn(sizes.indices)])
+        }
+        persistBuiltInWidgets()
+    }
+
+    fun moveBuiltInWidget(id: String, page: Int, delta: Int) {
+        val visible = builtInWidgets.filter { it.page == page }
+        val index = visible.indexOfFirst { it.id == id }
+        val destination = index + delta
+        if (index !in visible.indices || destination !in visible.indices) return
+        val reordered = visible.toMutableList().apply {
+            add(destination, removeAt(index))
+        }
+        val orderedIds = reordered.map { it.id }.toSet()
+        val otherPages = builtInWidgets.filterNot { it.id in orderedIds }
+        builtInWidgets = otherPages + reordered
+        persistBuiltInWidgets()
+    }
+
+    fun refreshCalendarEvents() {
+        viewModelScope.launch {
+            calendarEvents = withContext(Dispatchers.IO) {
+                CalendarRepository.upcoming(getApplication<Application>())
+            }
+        }
+    }
+
+    fun refreshWeather() {
+        if (weatherLoading) return
+        viewModelScope.launch {
+            weatherLoading = true
+            weatherError = null
+            try {
+                weather = WeatherRepository.current(getApplication<Application>())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("LauncherViewModel", "Could not refresh current weather.", e)
+                weatherError = e.message ?: "Weather could not be loaded."
+            } finally {
+                weatherLoading = false
+            }
+        }
+    }
+
+    private fun persistBuiltInWidgets() {
+        builtInWidgetStore.save(builtInWidgets)
     }
 
     fun addWidget(appWidgetId: Int, page: Int) {
@@ -103,8 +211,40 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshApps() {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
-            val loaded = withContext(Dispatchers.Default) { AppRepository.loadApps(ctx) }
+            val assignments = iconAssignmentStore.assignments()
+            val loaded = withContext(Dispatchers.Default) {
+                AppRepository.loadApps(ctx).map { app ->
+                    val assignment = assignments[app.packageName]
+                    val customIcon = if (assignment?.startsWith("custom|") == true) {
+                        try {
+                            iconAssignmentStore.loadCustomIcon(app.packageName).asImageBitmap()
+                        } catch (e: IOException) {
+                            Log.e("LauncherViewModel", "Could not load the saved icon for ${app.packageName}.", e)
+                            null
+                        } catch (e: SecurityException) {
+                            Log.e("LauncherViewModel", "Access to the saved icon for ${app.packageName} was denied.", e)
+                            null
+                        }
+                    } else if (assignment?.startsWith("pack|") == true) {
+                        val parts = assignment.split("|", limit = 3)
+                        try {
+                            if (parts.size == 3) {
+                                IconPackRepository.loadIcon(ctx, parts[1], parts[2])
+                            } else {
+                                throw IOException("Saved icon-pack mapping is invalid.")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("LauncherViewModel", "Could not load the saved icon-pack icon for ${app.packageName}.", e)
+                            null
+                        }
+                    } else null
+                    app.copy(iconAssignment = assignment, customIcon = customIcon)
+                }
+            }
             apps = loaded
+            iconPackCandidates = withContext(Dispatchers.IO) {
+                IconPackRepository.candidates(ctx, loaded)
+            }
 
             val byPackage = loaded.associateBy { it.packageName }
 
@@ -145,6 +285,201 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
             refreshRecentApps()
         }
+    }
+
+    fun applyIcon(packageName: String, glyph: String) {
+        iconAssignmentStore.setAssignment(packageName, glyph, iconAssignmentStore.selectedTheme)
+        updateAppIcon(packageName, "$glyph|${iconAssignmentStore.selectedTheme.name}")
+    }
+
+    fun applyCustomIcon(packageName: String, uri: Uri, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val icon = try {
+                withContext(Dispatchers.IO) {
+                    iconAssignmentStore.setCustomIcon(packageName, uri)
+                    iconAssignmentStore.loadCustomIcon(packageName).asImageBitmap()
+                }
+            } catch (e: IOException) {
+                Log.e("LauncherViewModel", "Failed to save custom app icon.", e)
+                onDone(false)
+                return@launch
+            } catch (e: SecurityException) {
+                Log.e("LauncherViewModel", "Access to selected custom icon was denied.", e)
+                onDone(false)
+                return@launch
+            }
+            updateAppIcon(packageName, "custom|${iconAssignmentStore.selectedTheme.name}", icon)
+            onDone(true)
+        }
+    }
+
+    fun applyIconTheme(theme: AppIconTheme) {
+        iconAssignmentStore.applyTheme(apps, theme)
+        val assignments = iconAssignmentStore.assignments()
+        apps = apps.map { app ->
+            app.copy(
+                iconAssignment = assignments[app.packageName],
+                customIcon = if (assignments[app.packageName]?.startsWith("custom|") == true) {
+                    app.customIcon
+                } else null,
+            )
+        }
+
+        val byPackage = apps.associateBy { it.packageName }
+        dock = dock.mapNotNull { byPackage[it.packageName] }
+        homePages = homePages.map { page -> page.mapNotNull { byPackage[it.packageName] } }
+        recentApps = recentApps.mapNotNull { byPackage[it.packageName] }
+    }
+
+    fun applyIconPack(packageName: String, onDone: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val mapped = withContext(Dispatchers.IO) {
+                    IconPackRepository.loadAssignments(getApplication(), packageName, apps)
+                }
+                val resolvedIcons = withContext(Dispatchers.IO) {
+                    mapped.map { (targetPackage, drawable) ->
+                        Triple(
+                            targetPackage,
+                            "pack|$packageName|$drawable",
+                            IconPackRepository.loadIcon(getApplication(), packageName, drawable),
+                        )
+                    }
+                }
+                iconAssignmentStore.applyIconPack(mapped, packageName)
+                updateAppIcons(resolvedIcons.associate { (targetPackage, assignment, icon) ->
+                    targetPackage to (assignment to icon)
+                })
+                onDone(true, null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("LauncherViewModel", "Could not apply icon pack $packageName.", e)
+                onDone(false, e.message ?: "The icon pack could not be applied.")
+            }
+        }
+    }
+
+    fun saveIconCollection(name: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) { iconAssignmentStore.saveCollection(name) }
+    }
+
+    fun duplicateIconCollection(sourceName: String, newName: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) {
+            iconAssignmentStore.duplicateCollection(sourceName, newName)
+        }
+    }
+
+    fun renameIconCollection(oldName: String, newName: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) {
+            iconAssignmentStore.renameCollection(oldName, newName)
+        }
+    }
+
+    fun deleteIconCollection(name: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) { iconAssignmentStore.deleteCollection(name) }
+    }
+
+    fun applyIconCollection(name: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) {
+            iconAssignmentStore.applyCollection(name)
+            refreshApps()
+        }
+    }
+
+    fun exportIconCollection(name: String, onDone: (String?, String?) -> Unit) {
+        try {
+            onDone(iconAssignmentStore.exportCollection(name), null)
+        } catch (e: JSONException) {
+            Log.e("LauncherViewModel", "Could not export icon collection.", e)
+            onDone(null, "Saved icon collections could not be read.")
+        } catch (e: IOException) {
+            Log.e("LauncherViewModel", "Could not read custom icons for export.", e)
+            onDone(null, e.message ?: "Custom icons could not be exported.")
+        } catch (e: IllegalArgumentException) {
+            onDone(null, e.message ?: "The selected icon collection could not be exported.")
+        }
+    }
+
+    fun importIconCollection(serialized: String, onDone: (Boolean, String?) -> Unit) {
+        runIconCollectionOperation(onDone) { iconAssignmentStore.importCollection(serialized) }
+    }
+
+    private fun reloadIconCollections() {
+        try {
+            iconCollections = iconAssignmentStore.collections()
+        } catch (e: JSONException) {
+            Log.e("LauncherViewModel", "Saved icon collections are invalid.", e)
+            iconCollections = emptyList()
+        }
+    }
+
+    private fun runIconCollectionOperation(
+        onDone: (Boolean, String?) -> Unit,
+        operation: () -> Unit,
+    ) {
+        try {
+            operation()
+            reloadIconCollections()
+            onDone(true, null)
+        } catch (e: JSONException) {
+            Log.e("LauncherViewModel", "Could not update icon collection.", e)
+            onDone(false, "Icon collection data could not be read or saved.")
+        } catch (e: IOException) {
+            Log.e("LauncherViewModel", "Could not read or write icon collection data.", e)
+            onDone(false, e.message ?: "Icon collection data could not be read or saved.")
+        } catch (e: IllegalArgumentException) {
+            onDone(false, e.message ?: "The icon collection could not be updated.")
+        }
+    }
+
+    fun resetIcon(packageName: String) {
+        iconAssignmentStore.reset(packageName)
+        updateAppIcon(packageName, null)
+    }
+
+    fun resetAllIcons() {
+        iconAssignmentStore.resetAll()
+        apps = apps.map { it.copy(iconAssignment = null, customIcon = null) }
+        val byPackage = apps.associateBy { it.packageName }
+        dock = dock.mapNotNull { byPackage[it.packageName] }
+        homePages = homePages.map { page -> page.mapNotNull { byPackage[it.packageName] } }
+        recentApps = recentApps.mapNotNull { byPackage[it.packageName] }
+    }
+
+    fun selectIconTheme(theme: AppIconTheme) {
+        iconAssignmentStore.setTheme(theme)
+    }
+
+    fun selectedIconTheme(): AppIconTheme = iconAssignmentStore.selectedTheme
+
+    private fun updateAppIcon(packageName: String, assignment: String?, customIcon: ImageBitmap? = null) {
+        apps = apps.map {
+            if (it.packageName == packageName) it.copy(
+                iconAssignment = assignment,
+                customIcon = if (
+                    assignment?.startsWith("custom|") == true ||
+                    assignment?.startsWith("pack|") == true
+                ) customIcon else null,
+            ) else it
+        }
+        val updated = apps.firstOrNull { it.packageName == packageName } ?: return
+        dock = dock.map { if (it.packageName == packageName) updated else it }
+        homePages = homePages.map { page ->
+            page.map { if (it.packageName == packageName) updated else it }
+        }
+        recentApps = recentApps.map { if (it.packageName == packageName) updated else it }
+    }
+
+    private fun updateAppIcons(updates: Map<String, Pair<String, ImageBitmap>>) {
+        apps = apps.map { app ->
+            val (assignment, icon) = updates[app.packageName] ?: return@map app
+            app.copy(iconAssignment = assignment, customIcon = icon)
+        }
+        val byPackage = apps.associateBy { it.packageName }
+        dock = dock.mapNotNull { byPackage[it.packageName] }
+        homePages = homePages.map { page -> page.mapNotNull { byPackage[it.packageName] } }
+        recentApps = recentApps.mapNotNull { byPackage[it.packageName] }
     }
 
     fun refreshRecentApps() {
@@ -222,6 +557,10 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             // detached by the caller (it also has to free their host ids).
             widgets = widgets.map { if (it.page > pageIndex) it.copy(page = it.page - 1) else it }
             persistWidgets()
+            builtInWidgets = builtInWidgets
+                .filterNot { it.page == pageIndex }
+                .map { if (it.page > pageIndex) it.copy(page = it.page - 1) else it }
+            persistBuiltInWidgets()
         }
     }
 
@@ -271,24 +610,55 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val metrics = getApplication<Application>().resources.displayMetrics
             val loaded = withContext(Dispatchers.IO) {
                 val file = store.current()
-                if (file?.path == shownPath) return@withContext null to shownPath
-                val bitmap = file?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
-                bitmap?.asImageBitmap() to file?.path
+                val foregroundFile = store.foreground()
+                val mainChanged = file?.path != shownPath
+                val foregroundChanged = foregroundFile?.path != shownForegroundPath ||
+                    foregroundFile?.lastModified() != storeForegroundModified
+                val bitmap = if (mainChanged) {
+                    file?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
+                } else null
+                val foreground = if (foregroundChanged) {
+                    foregroundFile?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
+                } else null
+                WallpaperImages(
+                    main = bitmap?.asImageBitmap(),
+                    mainPath = if (mainChanged) file?.path else null,
+                    foreground = foreground?.asImageBitmap(),
+                    foregroundPath = if (foregroundChanged) foregroundFile?.path else null,
+                    foregroundModified = if (foregroundChanged) foregroundFile?.lastModified() else null,
+                )
             }
-            val (image, path) = loaded
-            if (image != null || path != shownPath) {
-                wallpaper = image
-                shownPath = path
+            if (loaded.mainPath != null || store.current()?.path != shownPath) {
+                wallpaper = loaded.main
+                shownPath = loaded.mainPath ?: store.current()?.path
+            }
+            if (loaded.foregroundPath != null || store.foreground()?.path != shownForegroundPath) {
+                foregroundWallpaper = loaded.foreground
+                shownForegroundPath = loaded.foregroundPath ?: store.foreground()?.path
+                storeForegroundModified = loaded.foregroundModified ?: 0L
             }
         }
     }
 
-    fun setWallpapers(uris: List<Uri>, onDone: () -> Unit = {}) {
+    fun setWallpapers(uris: List<Uri>, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { store.replaceWith(uris) }
-            shownPath = null
-            reloadWallpaper()
-            onDone()
+            val saved = try {
+                withContext(Dispatchers.IO) { store.replaceWith(uris) }
+            } catch (e: IOException) {
+                Log.e("LauncherViewModel", "Failed to save selected wallpaper.", e)
+                false
+            } catch (e: SecurityException) {
+                Log.e("LauncherViewModel", "Access to selected wallpaper was denied.", e)
+                false
+            } catch (e: IllegalArgumentException) {
+                Log.e("LauncherViewModel", "Selected wallpaper URI is invalid.", e)
+                false
+            }
+            if (saved) {
+                shownPath = null
+                reloadWallpaper()
+            }
+            onDone(saved)
         }
     }
 
@@ -297,4 +667,45 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val info = WallpaperManager.getInstance(ctx).wallpaperInfo ?: return false
         return info.component == ComponentName(ctx, GlassWallpaperService::class.java)
     }
+
+    fun hasSavedWallpaper(): Boolean = store.photos().isNotEmpty()
+
+    fun setForeground(uri: Uri, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val saved = try {
+                withContext(Dispatchers.IO) { store.replaceForeground(uri) }
+            } catch (e: IOException) {
+                Log.e("LauncherViewModel", "Failed to save selected foreground image.", e)
+                false
+            } catch (e: SecurityException) {
+                Log.e("LauncherViewModel", "Access to selected foreground image was denied.", e)
+                false
+            }
+            if (saved) {
+                shownForegroundPath = null
+                storeForegroundModified = 0L
+                reloadWallpaper()
+                GlassWallpaperService.requestRefresh(getApplication<Application>())
+            }
+            onDone(saved)
+        }
+    }
+
+    fun clearForeground() {
+        store.clearForeground()
+        shownForegroundPath = null
+        storeForegroundModified = 0L
+        reloadWallpaper()
+        GlassWallpaperService.requestRefresh(getApplication<Application>())
+    }
+
+    private var storeForegroundModified = 0L
+
+    private data class WallpaperImages(
+        val main: ImageBitmap?,
+        val mainPath: String?,
+        val foreground: ImageBitmap?,
+        val foregroundPath: String?,
+        val foregroundModified: Long?,
+    )
 }

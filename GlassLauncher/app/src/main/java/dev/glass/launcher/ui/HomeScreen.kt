@@ -10,6 +10,9 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -42,6 +45,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -51,6 +55,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -71,9 +76,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -81,25 +88,41 @@ import dev.glass.launcher.AppEntry
 import dev.glass.launcher.AppRepository
 import dev.glass.launcher.HomeWidgetEntry
 import dev.glass.launcher.HomeWidgetStore
+import dev.glass.launcher.BuiltInWidgetType
 import dev.glass.launcher.LauncherViewModel
+import dev.glass.launcher.settings.ClockAlignment
+import dev.glass.launcher.settings.ClockFont
+import dev.glass.launcher.settings.LauncherSettings
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
 import dev.glass.launcher.ui.glass.LocalGlassQuality
 import dev.glass.launcher.ui.glass.LocalReduceMotion
 import dev.glass.launcher.ui.glass.rememberGlassQuality
+import android.text.format.DateFormat
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     vm: LauncherViewModel,
     onPickWallpaper: () -> Unit,
+    onPickForeground: () -> Unit,
     onOpenCompanionPreview: () -> Unit,
+    onApplyTheme: () -> Unit,
     onRequestDefaultHome: () -> Unit,
     appWidgetHost: AppWidgetHost,
     onAddWidget: (Int) -> Unit,
     onRemoveWidget: (Int) -> Unit,
+    onAddBuiltInWidget: (BuiltInWidgetType, Int) -> Unit,
+    onRequestCalendarPermission: () -> Unit,
+    onRequestWeatherPermission: () -> Unit,
+    onRefreshWeather: () -> Unit,
+    onOpenMediaAccessSettings: () -> Unit,
+    onPickCustomIcon: (String) -> Unit,
+    onExportIconCollection: (String) -> Unit,
+    onImportIconCollection: () -> Unit,
 ) {
     val context = LocalContext.current
     val launch: (AppEntry) -> Unit = { app ->
@@ -134,10 +157,17 @@ fun HomeScreen(
     }
 
     val pagerState = rememberPagerState(pageCount = { vm.homePages.size })
+    var showBuiltInWidgetPicker by remember { mutableStateOf(false) }
+    var showWeatherDisclosure by remember { mutableStateOf(false) }
+    var showMediaDisclosure by remember { mutableStateOf(false) }
+    var pendingWeatherPage by remember { mutableStateOf(0) }
 
     // On a home screen, Back only closes top layer
     BackHandler {
         when {
+            vm.clockEditorOpen -> vm.clockEditorOpen = false
+            vm.iconEditorOpen -> vm.iconEditorOpen = false
+            vm.wallpaperEditorOpen -> vm.wallpaperEditorOpen = false
             vm.settingsOpen -> vm.settingsOpen = false
             vm.menuOpen -> vm.closeContextMenu()
             vm.isEditMode -> vm.isEditMode = false
@@ -156,6 +186,9 @@ fun HomeScreen(
         LocalGlassMaterial provides material,
         LocalGlassQuality provides rememberGlassQuality(),
         LocalIconSize provides settings.iconSizeDp.dp,
+        LocalAppIconShape provides settings.iconShape,
+        LocalAppIconCornerRadius provides settings.iconCornerRadius,
+        LocalShowAppIconLabels provides settings.showIconLabels,
         LocalReduceMotion provides !allowAnimations,
     ) {
         BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
@@ -206,7 +239,7 @@ fun HomeScreen(
                             Text("Settings", color = Color.White, fontWeight = FontWeight.SemiBold)
                         }
                     }
-                    ClockCard()
+                    ClockCard(settings, onClick = { vm.clockEditorOpen = true })
 
                     Spacer(Modifier.height(12.dp))
 
@@ -231,6 +264,9 @@ fun HomeScreen(
                                     }) {
                                         Text("Remove page", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
                                     }
+                                }
+                                TextButton(onClick = { showBuiltInWidgetPicker = true }) {
+                                    Text("+ Widget", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 }
                                 TextButton(onClick = { vm.isEditMode = false }) {
                                     Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
@@ -270,6 +306,26 @@ fun HomeScreen(
                                 }
                             }
                         }
+                    }
+
+                    vm.builtInWidgets.filter { it.page == pagerState.currentPage }.forEach { widget ->
+                        BuiltInWidgetSurface(
+                            widget = widget,
+                            settings = settings,
+                            wallpaper = vm.wallpaper,
+                            events = vm.calendarEvents,
+                            weather = vm.weather,
+                            weatherLoading = vm.weatherLoading,
+                            weatherError = vm.weatherError,
+                            isEditMode = vm.isEditMode,
+                            onResize = { vm.resizeBuiltInWidget(widget.id, it) },
+                            onRemove = { vm.removeBuiltInWidget(widget.id) },
+                            onMove = { vm.moveBuiltInWidget(widget.id, pagerState.currentPage, it) },
+                            onRequestCalendarPermission = onRequestCalendarPermission,
+                            onRequestWeatherPermission = onRequestWeatherPermission,
+                            onRefreshWeather = onRefreshWeather,
+                            onOpenMediaAccessSettings = onOpenMediaAccessSettings,
+                        )
                     }
 
                     vm.widgets.filter { it.page == pagerState.currentPage }.forEach { widget ->
@@ -466,15 +522,160 @@ fun HomeScreen(
                         vm.settingsOpen = false
                         onPickWallpaper()
                     },
+                    onEditWallpaper = {
+                        vm.settingsOpen = false
+                        vm.wallpaperEditorOpen = true
+                    },
                     onOpenCompanionPreview = {
                         vm.settingsOpen = false
                         onOpenCompanionPreview()
+                    },
+                    onEditClock = {
+                        vm.settingsOpen = false
+                        vm.clockEditorOpen = true
+                    },
+                    onEditIcons = {
+                        vm.settingsOpen = false
+                        vm.iconEditorOpen = true
+                    },
+                    onApplyTheme = {
+                        vm.settingsOpen = false
+                        onApplyTheme()
                     },
                     onRequestDefaultHome = {
                         vm.settingsOpen = false
                         onRequestDefaultHome()
                     },
                     onDismiss = { vm.settingsOpen = false },
+                )
+            }
+
+            if (vm.clockEditorOpen) {
+                ClockEditorSheet(settings) { vm.clockEditorOpen = false }
+            }
+            if (vm.iconEditorOpen) {
+                IconEditorSheet(
+                    apps = vm.apps,
+                    collections = vm.iconCollections,
+                    iconPacks = vm.iconPackCandidates,
+                    selectedTheme = vm.selectedIconTheme(),
+                    onSelectTheme = vm::selectIconTheme,
+                    onApplyIcon = vm::applyIcon,
+                    onApplyTheme = vm::applyIconTheme,
+                    onPickCustomIcon = onPickCustomIcon,
+                    onApplyIconPack = vm::applyIconPack,
+                    onSaveCollection = vm::saveIconCollection,
+                    onDuplicateCollection = vm::duplicateIconCollection,
+                    onRenameCollection = vm::renameIconCollection,
+                    onDeleteCollection = vm::deleteIconCollection,
+                    onApplyCollection = vm::applyIconCollection,
+                    onExportCollection = onExportIconCollection,
+                    onImportCollection = onImportIconCollection,
+                    onResetIcon = vm::resetIcon,
+                    onResetAll = vm::resetAllIcons,
+                    onDismiss = { vm.iconEditorOpen = false },
+                )
+            }
+            if (vm.wallpaperEditorOpen) {
+                WallpaperEditorSheet(
+                    background = vm.wallpaper,
+                    foreground = vm.foregroundWallpaper,
+                    settings = settings,
+                    onPickForeground = onPickForeground,
+                    onClearForeground = vm::clearForeground,
+                    onDismiss = { vm.wallpaperEditorOpen = false },
+                )
+            }
+
+            if (showBuiltInWidgetPicker) {
+                AlertDialog(
+                    onDismissRequest = { showBuiltInWidgetPicker = false },
+                    title = { Text("Add a widget") },
+                    text = {
+                        Column {
+                            BuiltInWidgetType.entries.forEach { type ->
+                                TextButton(
+                                    onClick = {
+                                        showBuiltInWidgetPicker = false
+                                        if (type == BuiltInWidgetType.WEATHER) {
+                                            pendingWeatherPage = pagerState.currentPage
+                                            showWeatherDisclosure = true
+                                        } else if (type == BuiltInWidgetType.MUSIC) {
+                                            pendingWeatherPage = pagerState.currentPage
+                                            showMediaDisclosure = true
+                                        } else {
+                                            onAddBuiltInWidget(type, pagerState.currentPage)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(type.label, modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                            Text(
+                                "For weather and music, use + Add widget to select a widget supplied by an installed app.",
+                                modifier = Modifier.padding(top = 8.dp),
+                                fontSize = 12.sp,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showBuiltInWidgetPicker = false }) {
+                            Text("Done")
+                        }
+                    },
+                )
+            }
+
+            if (showWeatherDisclosure) {
+                AlertDialog(
+                    onDismissRequest = { showWeatherDisclosure = false },
+                    title = { Text("Weather and approximate location") },
+                    text = {
+                        Text(
+                            "To show local conditions, the app sends your approximate network location to Open-Meteo over HTTPS when you refresh weather. The coordinates are used to fetch the forecast; no location is needed for the other widgets.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            onAddBuiltInWidget(BuiltInWidgetType.WEATHER, pendingWeatherPage)
+                            onRequestWeatherPermission()
+                            showWeatherDisclosure = false
+                        }) {
+                            Text("Continue")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showWeatherDisclosure = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
+
+            if (showMediaDisclosure) {
+                AlertDialog(
+                    onDismissRequest = { showMediaDisclosure = false },
+                    title = { Text("Media playback access") },
+                    text = {
+                        Text(
+                            "Android requires Notification access to discover media sessions and send play, pause, and next commands. This system grant can expose notifications beyond music. Only enable it if you are comfortable with that access; you can also cancel and use your music app's own home-screen widget.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            onAddBuiltInWidget(BuiltInWidgetType.MUSIC, pendingWeatherPage)
+                            onOpenMediaAccessSettings()
+                            showMediaDisclosure = false
+                        }) {
+                            Text("Open settings")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showMediaDisclosure = false }) {
+                            Text("Cancel")
+                        }
+                    },
                 )
             }
         }
@@ -559,7 +760,8 @@ private fun AppWidgetHostView.updateWidgetSize(widthDp: Int, heightDp: Int) {
 }
 
 @Composable
-private fun ClockCard() {
+private fun ClockCard(settings: LauncherSettings, onClick: () -> Unit) {
+    val context = LocalContext.current
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -568,21 +770,61 @@ private fun ClockCard() {
         }
     }
 
-    GlassPanel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 20.dp)) {
+    val clockSize by animateFloatAsState(settings.clockSizeSp, label = "clock-size")
+    val clockColor by animateColorAsState(Color(settings.clockColor), label = "clock-color")
+    val textAlignment = when (settings.clockAlignment) {
+        ClockAlignment.START -> TextAlign.Start
+        ClockAlignment.CENTER -> TextAlign.Center
+        ClockAlignment.END -> TextAlign.End
+    }
+    val horizontalAlignment = when (settings.clockAlignment) {
+        ClockAlignment.START -> Alignment.Start
+        ClockAlignment.CENTER -> Alignment.CenterHorizontally
+        ClockAlignment.END -> Alignment.End
+    }
+    val timePattern = when (settings.clockFormat) {
+        1 -> "h:mm a"
+        2 -> "HH:mm"
+        else -> if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    }
+
+    GlassPanel(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize()
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "Clock. Tap to customize." },
+    ) {
+        Column(
+            Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            horizontalAlignment = horizontalAlignment,
+        ) {
             Text(
-                text = now.format(DateTimeFormatter.ofPattern("HH:mm")),
-                color = Color.White,
-                fontSize = 56.sp,
-                fontWeight = FontWeight.Light,
+                text = now.format(DateTimeFormatter.ofPattern(timePattern, Locale.getDefault())),
+                color = clockColor,
+                fontSize = clockSize.sp,
+                fontWeight = FontWeight(settings.clockWeight),
+                fontFamily = settings.clockFont.toFontFamily(),
+                letterSpacing = settings.clockLetterSpacingSp.sp,
+                textAlign = textAlignment,
+                modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                text = now.format(DateTimeFormatter.ofPattern("EEEE, d MMMM")),
+                text = now.format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.getDefault())),
                 color = Color.White.copy(alpha = 0.8f),
                 fontSize = 16.sp,
+                textAlign = textAlignment,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
+}
+
+private fun ClockFont.toFontFamily(): FontFamily = when (this) {
+    ClockFont.SANS -> FontFamily.SansSerif
+    ClockFont.SERIF -> FontFamily.Serif
+    ClockFont.CURSIVE -> FontFamily.Cursive
+    ClockFont.MONOSPACE -> FontFamily.Monospace
 }
 
 @Composable

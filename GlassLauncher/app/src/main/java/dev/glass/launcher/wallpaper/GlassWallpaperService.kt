@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.service.wallpaper.WallpaperService
 import android.view.Choreographer
 import android.view.SurfaceHolder
+import androidx.core.content.ContextCompat
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -35,15 +36,18 @@ class GlassWallpaperService : WallpaperService() {
         private val store = WallpaperStore(applicationContext)
         private val choreographer = Choreographer.getInstance()
         private val photoPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+        private val foregroundPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         private val blobPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val basePaint = Paint()
 
         private var width = 0
         private var height = 0
         private var bitmap: Bitmap? = null
+        private var foregroundBitmap: Bitmap? = null
 
         // path + mtime: picking new photos rewrites 000.img in place, so the path alone never changes.
         private var loadedKey: String? = null
+        private var loadedForegroundKey: String? = null
 
         // Set when the photo may have changed (wake, screen off, resize). Without it the photo
         // directory was listed and sorted on every frame while tilting.
@@ -71,16 +75,32 @@ class GlassWallpaperService : WallpaperService() {
             }
         }
 
+        private val refreshLayers = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                sourceDirty = true
+                requestFrame()
+            }
+        }
+
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             applicationContext.registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF))
+            val filter = IntentFilter(ACTION_REFRESH)
+            ContextCompat.registerReceiver(
+                applicationContext,
+                refreshLayers,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
         }
 
         override fun onDestroy() {
             applicationContext.unregisterReceiver(screenOff)
+            applicationContext.unregisterReceiver(refreshLayers)
             tilt.stop()
             choreographer.removeFrameCallback(this)
             bitmap = null
+            foregroundBitmap = null
             super.onDestroy()
         }
 
@@ -133,15 +153,17 @@ class GlassWallpaperService : WallpaperService() {
             sourceDirty = false
 
             val file = store.current()
-            if (file == null) {
-                bitmap = null
-                loadedKey = null
-                return
+            val key = file?.let { "${it.path}:${it.lastModified()}" }
+            if (key != loadedKey) {
+                bitmap = file?.let { store.decode(it, width, height) }
+                loadedKey = key
             }
-            val key = "${file.path}:${file.lastModified()}"
-            if (key == loadedKey) return
-            bitmap = store.decode(file, width, height)
-            loadedKey = key
+            val foreground = store.foreground()
+            val foregroundKey = foreground?.let { "${it.path}:${it.lastModified()}" }
+            if (foregroundKey != loadedForegroundKey) {
+                foregroundBitmap = foreground?.let { store.decode(it, width, height) }
+                loadedForegroundKey = foregroundKey
+            }
         }
 
         private fun draw() {
@@ -193,6 +215,25 @@ class GlassWallpaperService : WallpaperService() {
             } else {
                 drawAurora(canvas, w, h)
             }
+
+            foregroundBitmap?.let { subject ->
+                val settings = applicationContext.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
+                val scale = settings.getFloat("subject_scale", 1f).coerceIn(0.6f, 2f)
+                val x = settings.getFloat("subject_x", 0f).coerceIn(-0.5f, 0.5f)
+                val y = settings.getFloat("subject_y", 0f).coerceIn(-0.5f, 0.5f)
+                foregroundPaint.alpha = (settings.getFloat("subject_opacity", 1f).coerceIn(0f, 1f) * 255).toInt()
+                canvas.save()
+                canvas.translate(w / 2f + x * w, h / 2f + y * h)
+                canvas.scale(scale, scale)
+                canvas.translate(-w / 2f, -h / 2f)
+                val s = max(w / subject.width, h / subject.height)
+                canvas.save()
+                canvas.translate((w - subject.width * s) / 2f, (h - subject.height * s) / 2f)
+                canvas.scale(s, s)
+                canvas.drawBitmap(subject, 0f, 0f, foregroundPaint)
+                canvas.restore()
+                canvas.restore()
+            }
             canvas.restore()
         }
 
@@ -225,8 +266,15 @@ class GlassWallpaperService : WallpaperService() {
         }
     }
 
-    private companion object {
-        const val EASE = 0.2f
-        const val SETTLED = 0.002f
+    companion object {
+        private const val EASE = 0.2f
+        private const val SETTLED = 0.002f
+        private const val ACTION_REFRESH = "dev.glass.launcher.REFRESH_WALLPAPER_LAYERS"
+
+        fun requestRefresh(context: Context) {
+            context.applicationContext.sendBroadcast(
+                Intent(ACTION_REFRESH).setPackage(context.packageName),
+            )
+        }
     }
 }

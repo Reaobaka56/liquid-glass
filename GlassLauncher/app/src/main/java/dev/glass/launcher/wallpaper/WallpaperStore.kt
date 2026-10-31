@@ -20,6 +20,7 @@ class WallpaperStore(context: Context) {
 
     private val appContext = context.applicationContext
     private val dir = File(appContext.filesDir, "wallpapers").apply { mkdirs() }
+    private val foregroundFile = File(dir, "foreground.layer")
     private val prefs = appContext.getSharedPreferences("wallpaper", Context.MODE_PRIVATE)
 
     init {
@@ -37,6 +38,75 @@ class WallpaperStore(context: Context) {
 
     fun photos(): List<File> =
         dir.listFiles { f -> f.isFile && f.extension == "img" }?.sortedBy { it.name }.orEmpty()
+
+    fun foreground(): File? = foregroundFile.takeIf(File::isFile)
+
+    @Synchronized
+    @Throws(IOException::class, SecurityException::class)
+    fun replaceForeground(uri: Uri): Boolean {
+        val staged = File(dir, "foreground.new")
+        val backup = File(dir, "foreground.backup")
+        staged.delete()
+        backup.delete()
+        try {
+            val input = appContext.contentResolver.openInputStream(uri)
+                ?: throw IOException("Could not open the selected foreground image.")
+            input.use { source -> staged.outputStream().use(source::copyTo) }
+        } catch (e: IOException) {
+            staged.delete()
+            throw e
+        } catch (e: SecurityException) {
+            staged.delete()
+            throw e
+        }
+        if (!isTransparentCutout(staged)) {
+            staged.delete()
+            throw IOException("Choose an image with a transparent background for the subject layer.")
+        }
+
+        if (foregroundFile.exists() && !foregroundFile.renameTo(backup)) {
+            staged.delete()
+            throw IOException("Could not stage the existing foreground image.")
+        }
+        if (!staged.renameTo(foregroundFile)) {
+            if (backup.exists()) backup.renameTo(foregroundFile)
+            staged.delete()
+            throw IOException("Could not save the selected foreground image.")
+        }
+        backup.delete()
+        return true
+    }
+
+    private fun isTransparentCutout(file: File): Boolean {
+        val bitmap = BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 16 })
+            ?: return false
+        return try {
+            if (!bitmap.hasAlpha()) return false
+            var foundTransparent = false
+            var foundSubject = false
+            for (y in 0 until bitmap.height step 4) {
+                for (x in 0 until bitmap.width step 4) {
+                    when (android.graphics.Color.alpha(bitmap.getPixel(x, y))) {
+                        in 1..244 -> {
+                            foundTransparent = true
+                            foundSubject = true
+                        }
+                        0 -> foundTransparent = true
+                        in 245..255 -> foundSubject = true
+                    }
+                    if (foundTransparent && foundSubject) return true
+                }
+            }
+            false
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    @Synchronized
+    fun clearForeground() {
+        foregroundFile.delete()
+    }
 
     /** The photo that should be showing right now, or null if none has been picked. */
     fun current(): File? {
@@ -63,25 +133,65 @@ class WallpaperStore(context: Context) {
         return current()
     }
 
-    /** Replaces the whole set with [uris]. Blocking: call from a background thread. */
+    /** Replaces the whole set with [uris]. Returns false for an empty selection. Blocking. */
     @Synchronized
-    fun replaceWith(uris: List<Uri>) {
-        if (uris.isEmpty()) return
-        val copied = mutableListOf<File>()
-        uris.forEachIndexed { i, uri ->
-            val tmp = File(dir, "new_%03d.tmp".format(i))
-            val ok = runCatching {
-                appContext.contentResolver.openInputStream(uri)?.use { input ->
-                    tmp.outputStream().use { output -> input.copyTo(output) }
-                } != null
-            }.getOrDefault(false)
-            if (ok) copied += tmp else tmp.delete()
+    @Throws(IOException::class, SecurityException::class)
+    fun replaceWith(uris: List<Uri>): Boolean {
+        if (uris.isEmpty()) return false
+        val staged = mutableListOf<File>()
+        try {
+            uris.forEachIndexed { i, uri ->
+                val tmp = File(dir, "new_%03d.tmp".format(i))
+                staged += tmp
+                val input = appContext.contentResolver.openInputStream(uri)
+                    ?: throw IOException("Could not open selected wallpaper.")
+                input.use { source -> tmp.outputStream().use(source::copyTo) }
+            }
+        } catch (e: IOException) {
+            staged.forEach(File::delete)
+            throw e
+        } catch (e: SecurityException) {
+            staged.forEach(File::delete)
+            throw e
         }
-        if (copied.isEmpty()) return
 
-        photos().forEach { it.delete() }
-        copied.forEachIndexed { i, tmp -> tmp.renameTo(File(dir, "%03d.img".format(i))) }
+        val existing = photos()
+        val backups = existing.mapIndexed { index, photo ->
+            val backup = File(dir, "old_%03d.img".format(index))
+            if (!photo.renameTo(backup)) {
+                backupsRestore(existing, existing.take(index).mapIndexed { backupIndex, _ ->
+                    File(dir, "old_%03d.img".format(backupIndex))
+                })
+                staged.forEach(File::delete)
+                throw IOException("Could not stage the existing wallpaper set.")
+            }
+            backup
+        }
+
+        val installed = mutableListOf<File>()
+        try {
+            staged.forEachIndexed { index, tmp ->
+                val destination = File(dir, "%03d.img".format(index))
+                if (!tmp.renameTo(destination)) {
+                    throw IOException("Could not install the selected wallpaper.")
+                }
+                installed += destination
+            }
+        } catch (e: IOException) {
+            installed.forEach(File::delete)
+            backupsRestore(existing, backups)
+            staged.forEach(File::delete)
+            throw e
+        }
+        backups.forEach(File::delete)
         prefs.edit().putInt(KEY_INDEX, 0).putLong(KEY_LAST_ADVANCE, 0L).apply()
+        return true
+    }
+
+    private fun backupsRestore(existing: List<File>, backups: List<File>) {
+        existing.zip(backups).forEach { (original, backup) ->
+            if (backup.exists()) backup.renameTo(original)
+        }
     }
 
     /**

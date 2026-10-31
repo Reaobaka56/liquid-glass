@@ -11,13 +11,22 @@ Target: HONOR X5b, Android 14, MagicOS 8.0 (entry-level hardware: budget GPU for
 - Live wallpaper service (home + lock) with tilt parallax and photo shuffle, EXIF-correct decode.
 - AGSL glass lens (refraction, dispersion, specular, bevel) with Full / Reduced / Minimal fallback.
 - Persistent settings, layout and widgets.
+- Editable launcher clock with persisted font, size, weight, color, alignment, letter spacing, and system/12/24-hour formatting.
+- Companion wallpaper preview uses those clock settings and supports dragging the preview clock; preview time controls do not change device time.
+- Apply flow opens Android's wallpaper confirmation/default-home role and checks the active wallpaper service and Home role before reporting those states.
+- Persistent clock/calendar/battery/photo/weather/music widgets can be added inside edit mode, resized, and reordered. Calendar requires `READ_CALENDAR`; weather requires user consent plus coarse location and sends coordinates to Open-Meteo; music requires the user to grant notification access.
+- Transparent foreground cutouts are stored as a separate wallpaper layer. The wallpaper editor previews that layer above the editable clock, allows drag/zoom/position/opacity changes, and the live wallpaper draws the layer with persisted settings.
+- The icon studio discovers installed launcher apps, applies built-in iOS-inspired icon designs individually or in bulk, imports installed compatible `appfilter.xml` packs, supports custom image uploads/reset and named collections with duplicate/rename/export/restore, and persists assignments across the launcher grid, dock, drawer, and context menu. App launch targets remain their original packages. Global icon size, shape/corner radius, and label visibility are adjustable in Settings.
 
 **Fake, partial or missing**
-- "Lock screen companion" is an in-app preview Activity. It only appears over the keyguard if something launches it, and Android blocks background launches, so it is not a lock screen.
-- No drag-and-drop UI (the move function exists, nothing calls it), no folders, no App Library, no icon packs/masking, no badges.
-- No status bar of its own, no notification, media or battery integration.
-- No wallpaper editor, no segmentation, no depth effect, no themes app (Discover / My Themes / Apply).
-- Controls are Material `TextButton`s and sliders, not glass.
+- "Lock screen companion" is an in-app preview Activity, not the secure lock screen. Its clock styles and drag position do not alter the MagicOS keyguard.
+- No automatic foreground segmentation or brush-based mask repair. The depth layer requires a transparent cutout prepared externally.
+- Android's secure lock-screen clock remains above the live-wallpaper layers; the wallpaper layer cannot draw over the system keyguard UI.
+- Hosted Android widgets still depend on installed providers. Built-in widget layout is vertical and reorderable; there is no freeform grid positioning or widget stacks.
+- No icon masking, folders, App Library, app badges, notification center, or cross-app status bar replacement. Third-party packs must be installed, expose a compatible `appfilter.xml`, and will map only apps listed in that file. Launcher icon replacements do not affect Android Settings, notifications, or other launchers.
+- Apply verifies the default Home role and active live-wallpaper service; it cannot confirm whether MagicOS also assigned that wallpaper to its lock-screen surface.
+- No themes app (Discover / My Themes / theme bundle import).
+- Clock editor controls are interactive; other launcher settings still use standard Compose controls.
 
 **Why it does not read as Liquid Glass yet**
 - Panels refract only a wallpaper copy, never what is on top of them, and nothing merges or morphs.

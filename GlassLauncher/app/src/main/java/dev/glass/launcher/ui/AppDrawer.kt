@@ -406,12 +406,15 @@ fun AppIcon(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
-            modifier = Modifier.size(LocalIconSize.current),
+        AppIconArtwork(
+            original = app.icon,
+            label = app.label,
+            assignment = app.iconAssignment,
+            customIcon = app.customIcon,
+            modifier = Modifier,
+            size = LocalIconSize.current,
         )
-        if (showLabel) {
+        if (showLabel && LocalShowAppIconLabels.current) {
             Text(
                 text = app.label,
                 color = Color.White,
