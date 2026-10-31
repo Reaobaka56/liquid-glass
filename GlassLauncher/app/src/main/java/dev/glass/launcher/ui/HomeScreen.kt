@@ -31,6 +31,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -145,6 +148,9 @@ fun HomeScreen(
     val tilt = remember(vm) { { vm.tilt } }
     val settings = vm.settings
     val material = remember(settings.preset, settings.glassIntensity) { settings.material() }
+    val iosStatusBar = settings.iosStatusBar
+    val statusBarHeight = rememberStatusBarHeight()
+    HideSystemStatusBar(iosStatusBar)
 
     CompositionLocalProvider(
         LocalGlassMaterial provides material,
@@ -184,7 +190,11 @@ fun HomeScreen(
                 Column(
                     Modifier
                         .fillMaxSize()
-                        .statusBarsPadding()
+                        // With our own bar the system one is hidden, so reserve its height ourselves.
+                        .then(
+                            if (iosStatusBar) Modifier.padding(top = statusBarHeight)
+                            else Modifier.statusBarsPadding()
+                        )
                         .navigationBarsPadding()
                         .padding(16.dp),
                 ) {
@@ -403,13 +413,19 @@ fun HomeScreen(
                     fadeOut()
                 },
             ) {
-                AppDrawer(
-                    apps = vm.apps,
-                    recentApps = vm.recentApps,
-                    onLaunch = launch,
-                    onLongClickApp = { vm.openContextMenu(it) },
-                    onClose = { vm.drawerOpen = false },
-                )
+                // The drawer pads itself with the system insets, which are 0 at the top once the
+                // system bar is hidden (a cut-out is still counted), so add only what is missing.
+                val safeTop = WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding()
+                val missingTop = if (iosStatusBar && statusBarHeight > safeTop) statusBarHeight - safeTop else 0.dp
+                Box(Modifier.padding(top = missingTop)) {
+                    AppDrawer(
+                        apps = vm.apps,
+                        recentApps = vm.recentApps,
+                        onLaunch = launch,
+                        onLongClickApp = { vm.openContextMenu(it) },
+                        onClose = { vm.drawerOpen = false },
+                    )
+                }
             }
 
             // Context Menu Overlay
@@ -434,6 +450,13 @@ fun HomeScreen(
                     onDismiss = { vm.closeContextMenu() },
                     onLaunchShortcut = { shortcut -> AppRepository.launchShortcut(context, shortcut) },
                 )
+            }
+
+            // Topmost layer; draws only, never consumes touches.
+            if (iosStatusBar) {
+                Box(Modifier.fillMaxSize()) {
+                    IosStatusBar(Modifier.fillMaxWidth().height(statusBarHeight))
+                }
             }
 
             if (vm.settingsOpen) {

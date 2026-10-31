@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -154,6 +156,33 @@ fun LauncherSettingsSheet(
 
                 Spacer(Modifier.height(12.dp))
                 Text("Launcher", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("iOS status bar", color = Color.White, fontSize = 16.sp)
+                        Text(
+                            "Hides the system bar on the home screen. Swipe down from the top edge to reach it.",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(
+                        checked = settings.iosStatusBar,
+                        onCheckedChange = settings::updateIosStatusBar,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF34C759),
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.3f),
+                            uncheckedBorderColor = Color.Transparent,
+                        ),
+                    )
+                }
                 TextButton(onClick = onChangeWallpaper, modifier = Modifier.fillMaxWidth()) {
                     Text("Change wallpaper", color = Color.White)
                 }

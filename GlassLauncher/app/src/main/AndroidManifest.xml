@@ -5,6 +5,9 @@
         android:name="android.software.live_wallpaper"
         android:required="false" />
 
+    <!-- Status bar: Wi-Fi state (normal permission, granted at install). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Required on API 28+ for the "Uninstall" menu action (ACTION_DELETE). -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
