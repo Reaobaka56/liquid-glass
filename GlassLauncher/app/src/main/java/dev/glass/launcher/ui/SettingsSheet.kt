@@ -456,14 +456,27 @@ private fun PresetChip(
     GlassPanel(
         modifier
             .height(64.dp)
-            .then(if (selected) Modifier.border(1.5.dp, Color.White, shape) else Modifier)
+            .then(
+                if (selected) Modifier.border(1.5.dp, Color(0xFF63D9F0), shape)
+                else Modifier,
+            )
             .clickable(onClick = onClick)
             .semantics { contentDescription = "${preset.label} glass${if (selected) ", selected" else ""}" },
         cornerRadius = 18.dp,
         material = preset.material.scaled(intensity),
     ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(preset.label, color = Color.White, fontSize = 12.sp)
+        Column(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                "09:41",
+                color = if (selected) Color(0xFF80E4F6) else Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Light,
+            )
+            Text(preset.label, color = Color.White.copy(alpha = 0.78f), fontSize = 10.sp)
         }
     }
 }

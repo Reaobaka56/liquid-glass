@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.net.Uri
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
@@ -17,6 +18,9 @@ import dev.glass.launcher.settings.LauncherSettings
 import dev.glass.launcher.wallpaper.GlassWallpaperService
 import dev.glass.launcher.wallpaper.TiltTracker
 import dev.glass.launcher.wallpaper.WallpaperStore
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
+import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
 import java.io.IOException
 import org.json.JSONException
 import kotlinx.coroutines.CancellationException
@@ -47,7 +51,25 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var wallpaper by mutableStateOf<ImageBitmap?>(null)
         private set
 
+    var wallpaperGallery by mutableStateOf<List<WallpaperGalleryPhoto>>(emptyList())
+        private set
+
+    var selectedWallpaperIndex by mutableIntStateOf(0)
+        private set
+
+    var shuffleOnLock by mutableStateOf(false)
+        private set
+
     var foregroundWallpaper by mutableStateOf<ImageBitmap?>(null)
+        private set
+
+    var foregroundRestorable by mutableStateOf(false)
+        private set
+
+    var subjectDetectionRunning by mutableStateOf(false)
+        private set
+
+    var subjectDetectionMessage by mutableStateOf<String?>(null)
         private set
 
     var widgets by mutableStateOf<List<HomeWidgetEntry>>(emptyList())
@@ -94,10 +116,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }
     private var shownPath: String? = null
     private var shownForegroundPath: String? = null
+    private var shownRevision = -1L
 
     init {
         widgets = widgetStore.load()
         builtInWidgets = builtInWidgetStore.load()
+        shuffleOnLock = store.shuffleOnLock
         reloadIconCollections()
         refreshApps()
         reloadWallpaper()
@@ -611,32 +635,51 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = withContext(Dispatchers.IO) {
                 val file = store.current()
                 val foregroundFile = store.foreground()
-                val mainChanged = file?.path != shownPath
+                val revision = store.revision()
+                val mainChanged = file?.path != shownPath || revision != shownRevision
                 val foregroundChanged = foregroundFile?.path != shownForegroundPath ||
-                    foregroundFile?.lastModified() != storeForegroundModified
+                    foregroundFile?.lastModified() != storeForegroundModified ||
+                    revision != shownRevision
                 val bitmap = if (mainChanged) {
                     file?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
                 } else null
                 val foreground = if (foregroundChanged) {
                     foregroundFile?.let { store.decode(it, metrics.widthPixels, metrics.heightPixels) }
                 } else null
+                val gallery = store.photos().mapIndexedNotNull { index, photo ->
+                    store.decode(photo, metrics.widthPixels / 3, metrics.heightPixels / 3)
+                        ?.asImageBitmap()
+                        ?.let { WallpaperGalleryPhoto(index, it) }
+                }
                 WallpaperImages(
                     main = bitmap?.asImageBitmap(),
                     mainPath = if (mainChanged) file?.path else null,
                     foreground = foreground?.asImageBitmap(),
                     foregroundPath = if (foregroundChanged) foregroundFile?.path else null,
                     foregroundModified = if (foregroundChanged) foregroundFile?.lastModified() else null,
+                    gallery = gallery,
+                    currentIndex = store.currentIndex(),
+                    revision = revision,
                 )
             }
-            if (loaded.mainPath != null || store.current()?.path != shownPath) {
+            if (loaded.mainPath != null || store.current()?.path != shownPath ||
+                loaded.revision != shownRevision
+            ) {
                 wallpaper = loaded.main
                 shownPath = loaded.mainPath ?: store.current()?.path
             }
-            if (loaded.foregroundPath != null || store.foreground()?.path != shownForegroundPath) {
+            if (loaded.foregroundPath != null || store.foreground()?.path != shownForegroundPath ||
+                loaded.revision != shownRevision
+            ) {
                 foregroundWallpaper = loaded.foreground
                 shownForegroundPath = loaded.foregroundPath ?: store.foreground()?.path
                 storeForegroundModified = loaded.foregroundModified ?: 0L
             }
+            shownRevision = loaded.revision
+            foregroundRestorable = store.hasForegroundSource()
+            wallpaperGallery = loaded.gallery
+            selectedWallpaperIndex = loaded.currentIndex
+            shuffleOnLock = store.shuffleOnLock
         }
     }
 
@@ -657,6 +700,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             if (saved) {
                 shownPath = null
                 reloadWallpaper()
+                GlassWallpaperService.requestRefresh(getApplication<Application>())
             }
             onDone(saved)
         }
@@ -669,6 +713,143 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun hasSavedWallpaper(): Boolean = store.photos().isNotEmpty()
+
+    fun selectWallpaper(index: Int) {
+        if (store.select(index) == null) {
+            Log.w("LauncherViewModel", "Ignored invalid wallpaper selection index $index.")
+            return
+        }
+        shownPath = null
+        reloadWallpaper()
+        GlassWallpaperService.requestRefresh(getApplication<Application>())
+    }
+
+    fun updateShuffleOnLock(enabled: Boolean) {
+        store.shuffleOnLock = enabled
+        shuffleOnLock = enabled
+        GlassWallpaperService.requestRefresh(getApplication<Application>())
+    }
+
+    fun detectForegroundSubject() {
+        if (subjectDetectionRunning) return
+        val photo = store.current()
+        if (photo == null) {
+            subjectDetectionMessage = "Choose a personal photo before detecting a subject."
+            return
+        }
+
+        subjectDetectionRunning = true
+        subjectDetectionMessage = "Preparing on-device subject detection…"
+        viewModelScope.launch {
+            val metrics = getApplication<Application>().resources.displayMetrics
+            val source = try {
+                withContext(Dispatchers.IO) {
+                    store.decode(photo, metrics.widthPixels, metrics.heightPixels)
+                }
+            } catch (e: IllegalArgumentException) {
+                Log.e("LauncherViewModel", "Could not decode the wallpaper for subject detection.", e)
+                null
+            }
+            if (source == null) {
+                subjectDetectionRunning = false
+                subjectDetectionMessage = "This photo could not be decoded for subject detection."
+                return@launch
+            }
+
+            val segmenter = try {
+                SubjectSegmentation.getClient(
+                    SubjectSegmenterOptions.Builder().enableForegroundBitmap().build(),
+                )
+            } catch (e: IllegalStateException) {
+                source.recycle()
+                subjectDetectionRunning = false
+                subjectDetectionMessage =
+                    "Subject detection needs Google Play services with the subject model available."
+                Log.e("LauncherViewModel", "Could not initialize on-device subject detection.", e)
+                return@launch
+            }
+
+            try {
+                segmenter.process(InputImage.fromBitmap(source, 0))
+                    .addOnSuccessListener { result ->
+                        val foreground = result.foregroundBitmap
+                        if (foreground == null) {
+                            source.recycle()
+                            segmenter.close()
+                            subjectDetectionRunning = false
+                            subjectDetectionMessage =
+                                "No clear foreground subject was detected. Try another photo or import a transparent cutout."
+                            return@addOnSuccessListener
+                        }
+                        viewModelScope.launch {
+                            val saved = try {
+                                withContext(Dispatchers.IO) {
+                                    store.replaceForeground(foreground, source)
+                                }
+                            } catch (e: IOException) {
+                                Log.e("LauncherViewModel", "Could not save the detected subject layer.", e)
+                                subjectDetectionMessage = e.message
+                                false
+                            }
+                            if (saved) {
+                                shownForegroundPath = null
+                                storeForegroundModified = 0L
+                                reloadWallpaper()
+                                GlassWallpaperService.requestRefresh(getApplication<Application>())
+                                subjectDetectionMessage =
+                                    "Subject separated. Use Erase / Restore to refine its edge."
+                            }
+                            foreground.recycle()
+                            source.recycle()
+                            segmenter.close()
+                            subjectDetectionRunning = false
+                        }
+                    }
+                    .addOnFailureListener { error ->
+                        Log.e("LauncherViewModel", "On-device subject detection failed.", error)
+                        source.recycle()
+                        segmenter.close()
+                        subjectDetectionRunning = false
+                        subjectDetectionMessage =
+                            "Subject detection is unavailable. Check Google Play services and try again, or import a transparent cutout."
+                    }
+            } catch (e: IllegalStateException) {
+                Log.e("LauncherViewModel", "Subject detection could not start.", e)
+                source.recycle()
+                segmenter.close()
+                subjectDetectionRunning = false
+                subjectDetectionMessage =
+                    "Subject detection could not start. Check Google Play services and try again."
+            }
+        }
+    }
+
+    fun correctSubjectMask(
+        points: List<Pair<Float, Float>>,
+        brushRadius: Float,
+        erase: Boolean,
+    ) {
+        viewModelScope.launch {
+            val corrected = try {
+                withContext(Dispatchers.IO) {
+                    store.correctForegroundMask(points, brushRadius, erase)
+                }
+            } catch (e: IOException) {
+                Log.e("LauncherViewModel", "Could not correct the subject mask.", e)
+                subjectDetectionMessage = e.message
+                false
+            }
+            if (corrected) {
+                shownForegroundPath = null
+                storeForegroundModified = 0L
+                reloadWallpaper()
+                GlassWallpaperService.requestRefresh(getApplication<Application>())
+                subjectDetectionMessage = "Mask correction saved."
+            } else if (subjectDetectionMessage == null) {
+                subjectDetectionMessage = "Detect a subject before editing its mask."
+            }
+        }
+    }
 
     fun setForeground(uri: Uri, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
@@ -707,5 +888,13 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val foreground: ImageBitmap?,
         val foregroundPath: String?,
         val foregroundModified: Long?,
+        val gallery: List<WallpaperGalleryPhoto>,
+        val currentIndex: Int,
+        val revision: Long,
     )
 }
+
+data class WallpaperGalleryPhoto(
+    val index: Int,
+    val thumbnail: ImageBitmap,
+)

@@ -239,6 +239,7 @@ class MainActivity : ComponentActivity() {
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
+                onApplyWallpaper = { offerLiveWallpaper(force = true) },
                 onPickForeground = {
                     pickForeground.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -409,8 +410,22 @@ class MainActivity : ComponentActivity() {
      * The lock screen only gets the photo (and its tilt and shuffle) when Glass Wallpaper is the
      * system wallpaper, so open the system's "set wallpaper" preview if it isn't yet.
      */
-    private fun offerLiveWallpaper() {
-        if (vm.liveWallpaperActive()) return
+    private fun offerLiveWallpaper(force: Boolean = false) {
+        if (vm.liveWallpaperActive() && !force) {
+            GlassWallpaperService.requestRefresh(this)
+            if (applyRequested) {
+                requestDefaultHome()
+            } else {
+                Toast.makeText(this, "Wallpaper updated on the active Glass Wallpaper.", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        if (!vm.hasSavedWallpaper()) {
+            pickImages.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+            )
+            return
+        }
         val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
             WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
             ComponentName(this, GlassWallpaperService::class.java),

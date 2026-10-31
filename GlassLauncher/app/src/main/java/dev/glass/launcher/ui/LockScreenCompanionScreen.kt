@@ -1,5 +1,9 @@
 package dev.glass.launcher.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -52,6 +56,8 @@ import dev.glass.launcher.settings.ClockFont
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
 import dev.glass.launcher.ui.glass.LocalGlassQuality
 import dev.glass.launcher.ui.glass.rememberGlassQuality
+import dev.glass.launcher.ui.MusicPlayerSurface
+import dev.glass.launcher.wallpaper.Parallax
 import dev.glass.launcher.wallpaper.WallpaperStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -102,7 +108,12 @@ fun LockScreenCompanionScreen(
         LocalGlassMaterial provides material,
         LocalGlassQuality provides rememberGlassQuality(),
     ) {
-        BackdropHost(wallpaper = wallpaper) {
+        BackdropHost(
+            wallpaper = wallpaper,
+            wallpaperScale = settings.wallpaperScale,
+            wallpaperX = settings.wallpaperX,
+            wallpaperY = settings.wallpaperY,
+        ) {
             Box(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier
@@ -145,6 +156,27 @@ fun LockScreenCompanionScreen(
                                 textAlign = TextAlign.Center,
                             )
                         }
+                        Spacer(Modifier.height(14.dp))
+                        MusicPlayerSurface(
+                            modifier = Modifier.fillMaxWidth().height(142.dp),
+                            onOpenAccessSettings = {
+                                try {
+                                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                } catch (e: ActivityNotFoundException) {
+                                    Toast.makeText(
+                                        context,
+                                        "Open Android Settings > Notification access to enable music details.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                } catch (e: SecurityException) {
+                                    Toast.makeText(
+                                        context,
+                                        "Android denied access to Notification access settings.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            },
+                        )
                         Spacer(Modifier.height(14.dp))
                         Button(
                             onClick = onContinueToDeviceUnlock,
@@ -254,10 +286,13 @@ fun LockScreenCompanionScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    scaleX = settings.subjectScale
-                                    scaleY = settings.subjectScale
-                                    translationX = settings.subjectX * size.width
-                                    translationY = settings.subjectY * size.height
+                                            val wallpaperScale = Parallax.ZOOM * settings.wallpaperScale
+                                            scaleX = wallpaperScale * settings.subjectScale
+                                            scaleY = wallpaperScale * settings.subjectScale
+                                            translationX = settings.wallpaperX * size.width +
+                                                wallpaperScale * settings.subjectX * size.width
+                                            translationY = settings.wallpaperY * size.height +
+                                                wallpaperScale * settings.subjectY * size.height
                                     alpha = settings.subjectOpacity
                                 },
                             contentScale = ContentScale.Crop,

@@ -139,6 +139,21 @@ class LauncherSettings(context: Context) {
     )
         private set
 
+    var wallpaperScale by mutableFloatStateOf(
+        prefs.getFloat(KEY_WALLPAPER_SCALE, 1f).coerceIn(WALLPAPER_SCALE_RANGE)
+    )
+        private set
+
+    var wallpaperX by mutableFloatStateOf(
+        prefs.getFloat(KEY_WALLPAPER_X, 0f).coerceIn(SUBJECT_OFFSET_RANGE)
+    )
+        private set
+
+    var wallpaperY by mutableFloatStateOf(
+        prefs.getFloat(KEY_WALLPAPER_Y, 0f).coerceIn(SUBJECT_OFFSET_RANGE)
+    )
+        private set
+
     fun updateIosStatusBar(value: Boolean) {
         iosStatusBar = value
         prefs.edit().putBoolean(KEY_IOS_STATUS_BAR, value).apply()
@@ -210,6 +225,21 @@ class LauncherSettings(context: Context) {
         GlassWallpaperService.requestRefresh(appContext)
     }
 
+    fun updateWallpaperScale(value: Float) {
+        wallpaperScale = value.coerceIn(WALLPAPER_SCALE_RANGE)
+        prefs.edit().putFloat(KEY_WALLPAPER_SCALE, wallpaperScale).apply()
+        GlassWallpaperService.requestRefresh(appContext)
+    }
+
+    fun updateWallpaperPosition(x: Float, y: Float) {
+        wallpaperX = x.coerceIn(SUBJECT_OFFSET_RANGE)
+        wallpaperY = y.coerceIn(SUBJECT_OFFSET_RANGE)
+        prefs.edit().putFloat(KEY_WALLPAPER_X, wallpaperX)
+            .putFloat(KEY_WALLPAPER_Y, wallpaperY)
+            .apply()
+        GlassWallpaperService.requestRefresh(appContext)
+    }
+
     fun updatePreset(value: GlassPreset) {
         preset = value
         prefs.edit().putString(KEY_PRESET, value.name).apply()
@@ -255,6 +285,7 @@ class LauncherSettings(context: Context) {
         const val DEFAULT_CLOCK_SIZE = 56f
         val SUBJECT_SCALE_RANGE = 0.6f..2f
         val SUBJECT_OFFSET_RANGE = (-0.5f)..0.5f
+        val WALLPAPER_SCALE_RANGE = 1f..2f
 
         private const val KEY_PRESET = "glass_preset"
         private const val KEY_INTENSITY = "glass_intensity"
@@ -276,5 +307,8 @@ class LauncherSettings(context: Context) {
         private const val KEY_SUBJECT_X = "subject_x"
         private const val KEY_SUBJECT_Y = "subject_y"
         private const val KEY_SUBJECT_OPACITY = "subject_opacity"
+        private const val KEY_WALLPAPER_SCALE = "wallpaper_scale"
+        private const val KEY_WALLPAPER_X = "wallpaper_x"
+        private const val KEY_WALLPAPER_Y = "wallpaper_y"
     }
 }

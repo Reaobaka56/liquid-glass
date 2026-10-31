@@ -8,10 +8,12 @@ import android.os.Build
 import android.provider.CalendarContract
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,11 +21,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.Crossfade
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -147,7 +152,6 @@ fun BuiltInWidgetSurface(
                 onRefresh = onRefreshWeather,
             )
             BuiltInWidgetType.MUSIC -> MusicWidget(
-                widgetId = widget.id,
                 height = height,
                 onOpenAccessSettings = onOpenMediaAccessSettings,
             )
@@ -157,15 +161,45 @@ fun BuiltInWidgetSurface(
 
 @Composable
 private fun MusicWidget(
-    widgetId: String,
     height: androidx.compose.ui.unit.Dp,
+    onOpenAccessSettings: () -> Unit,
+) {
+    MusicPlayerSurface(
+        modifier = Modifier.fillMaxWidth().height(height),
+        onOpenAccessSettings = onOpenAccessSettings,
+    )
+}
+
+@Composable
+fun MusicPlayerSurface(
+    modifier: Modifier = Modifier,
     onOpenAccessSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     var hasAccess by remember { mutableStateOf(MediaSessionRepository.hasNotificationAccess(context)) }
     var track by remember { mutableStateOf<MediaSnapshot?>(null) }
     var sessionError by remember { mutableStateOf(false) }
-    LaunchedEffect(widgetId) {
+    DisposableEffect(context, hasAccess) {
+        if (!hasAccess) {
+            track = null
+            onDispose { }
+        } else {
+            val observation = try {
+                MediaSessionRepository.observe(context) {
+                    track = it
+                    sessionError = false
+                }
+            } catch (e: SecurityException) {
+                sessionError = true
+                null
+            } catch (e: IllegalStateException) {
+                sessionError = true
+                null
+            }
+            onDispose { observation?.close() }
+        }
+    }
+    LaunchedEffect(context) {
         while (true) {
             hasAccess = MediaSessionRepository.hasNotificationAccess(context)
             sessionError = false
@@ -175,49 +209,170 @@ private fun MusicWidget(
                 sessionError = true
                 null
             }
-            delay(2_000L)
+            delay(1_500L)
         }
     }
 
-    GlassPanel(Modifier.fillMaxWidth().height(height), cornerRadius = 24.dp) {
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("NOW PLAYING", color = Color.White.copy(alpha = 0.68f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            when {
-                !hasAccess || sessionError -> TextButton(onClick = onOpenAccessSettings) {
-                    Text("Allow media access in Notification access settings", color = Color.White, fontSize = 12.sp)
-                }
-                track == null -> Text("Start playback in a music app", color = Color.White, fontSize = 13.sp)
-                else -> {
-                    Text(
-                        track!!.title,
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        track!!.artist,
-                        color = Color.White.copy(alpha = 0.74f),
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(onClick = { MediaSessionRepository.togglePlayback(context) }) {
-                            Text(if (track!!.playing) "Pause" else "Play", color = Color.White)
+    val currentTrack = track
+    val artwork = remember(currentTrack?.artwork) { currentTrack?.artwork?.asImageBitmap() }
+    val accent = remember(currentTrack?.artwork) {
+        currentTrack?.artwork?.let { bitmap ->
+            Color(bitmap.getPixel(bitmap.width / 2, bitmap.height / 2))
+        } ?: Color(0xFF39C8E8)
+    }
+
+    BoxWithConstraints(modifier) {
+        val compact = maxHeight < 120.dp
+        GlassPanel(Modifier.fillMaxSize(), cornerRadius = 26.dp, interactive = false) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                accent.copy(alpha = 0.24f),
+                                Color(0xFF10131B).copy(alpha = 0.58f),
+                                Color(0xFF080A10).copy(alpha = 0.76f),
+                            ),
+                        ),
+                    ),
+            ) {
+                Column(
+                    Modifier.fillMaxSize()
+                        .padding(horizontal = if (compact) 9.dp else 14.dp, vertical = if (compact) 5.dp else 10.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().weight(1f, fill = false),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+                    ) {
+                        Box(
+                            Modifier
+                                .size(if (compact) 46.dp else 64.dp)
+                                .clip(RoundedCornerShape(if (compact) 13.dp else 17.dp))
+                                .background(Color.White.copy(alpha = 0.10f))
+                                .border(
+                                    1.dp,
+                                    Brush.linearGradient(
+                                        listOf(Color.White.copy(alpha = 0.74f), accent.copy(alpha = 0.28f)),
+                                    ),
+                                    RoundedCornerShape(if (compact) 13.dp else 17.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Crossfade(targetState = artwork, label = "media-artwork") { image ->
+                                if (image != null) {
+                                    Image(
+                                        bitmap = image,
+                                        contentDescription = "Album artwork",
+                                        modifier = Modifier.fillMaxSize().clip(
+                                            RoundedCornerShape(if (compact) 12.dp else 16.dp),
+                                        ),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                } else {
+                                    Text("♪", color = Color.White.copy(alpha = 0.86f), fontSize = 28.sp)
+                                }
+                            }
                         }
-                        TextButton(onClick = { MediaSessionRepository.skipNext(context) }) {
-                            Text("Next", color = Color.White)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (currentTrack == null) "MUSIC" else if (currentTrack.playing) "NOW PLAYING" else "PAUSED",
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 1.2.sp,
+                            )
+                            when {
+                                !hasAccess || sessionError -> TextButton(
+                                    onClick = onOpenAccessSettings,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                                ) {
+                                    Text(
+                                        "Enable notification access",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                currentTrack == null -> Text(
+                                    "Play music to see track details",
+                                    color = Color.White.copy(alpha = 0.76f),
+                                    fontSize = 13.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                else -> {
+                                    Text(
+                                        currentTrack.title,
+                                        color = Color.White,
+                                        fontSize = if (compact) 13.sp else 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        currentTrack.artist,
+                                        color = Color.White.copy(alpha = 0.78f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (!compact) {
+                                        currentTrack.album?.let { album ->
+                                            Text(
+                                                album,
+                                                color = Color.White.copy(alpha = 0.58f),
+                                                fontSize = 10.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (compact && currentTrack?.canTogglePlayback == true) {
+                            TextButton(
+                                onClick = { MediaSessionRepository.togglePlayback(context) },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                            ) {
+                                Text(if (currentTrack.playing) "Ⅱ" else "▶", color = Color.White, fontSize = 18.sp)
+                            }
+                        }
+                    }
+                    if (currentTrack != null && hasAccess && !compact) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (currentTrack.canSkipPrevious) {
+                                TextButton(
+                                    onClick = { MediaSessionRepository.skipPrevious(context) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                                ) { Text("⏮", color = Color.White, fontSize = 17.sp) }
+                            }
+                            if (currentTrack.canTogglePlayback) {
+                                TextButton(
+                                    onClick = { MediaSessionRepository.togglePlayback(context) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp),
+                                ) {
+                                    Text(if (currentTrack.playing) "Ⅱ" else "▶", color = Color.White, fontSize = 20.sp)
+                                }
+                            }
+                            if (currentTrack.canSkipNext) {
+                                TextButton(
+                                    onClick = { MediaSessionRepository.skipNext(context) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                                ) { Text("⏭", color = Color.White, fontSize = 17.sp) }
+                            }
                         }
                     }
                 }
             }
-        }
-    }
 }
 
 @Composable

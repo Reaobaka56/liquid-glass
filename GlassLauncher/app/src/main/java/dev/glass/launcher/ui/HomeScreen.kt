@@ -108,6 +108,7 @@ import java.util.Locale
 fun HomeScreen(
     vm: LauncherViewModel,
     onPickWallpaper: () -> Unit,
+    onApplyWallpaper: () -> Unit,
     onPickForeground: () -> Unit,
     onOpenCompanionPreview: () -> Unit,
     onApplyTheme: () -> Unit,
@@ -191,7 +192,13 @@ fun HomeScreen(
         LocalShowAppIconLabels provides settings.showIconLabels,
         LocalReduceMotion provides !allowAnimations,
     ) {
-        BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
+        BackdropHost(
+            wallpaper = vm.wallpaper,
+            tilt = tilt,
+            wallpaperScale = settings.wallpaperScale,
+            wallpaperX = settings.wallpaperX,
+            wallpaperY = settings.wallpaperY,
+        ) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -580,7 +587,19 @@ fun HomeScreen(
                 WallpaperEditorSheet(
                     background = vm.wallpaper,
                     foreground = vm.foregroundWallpaper,
+                    wallpapers = vm.wallpaperGallery,
+                    selectedWallpaperIndex = vm.selectedWallpaperIndex,
+                    shuffleOnLock = vm.shuffleOnLock,
                     settings = settings,
+                    detectionRunning = vm.subjectDetectionRunning,
+                    detectionMessage = vm.subjectDetectionMessage,
+                    foregroundRestorable = vm.foregroundRestorable,
+                    onPickWallpaper = onPickWallpaper,
+                    onSelectWallpaper = vm::selectWallpaper,
+                    onUpdateShuffle = vm::updateShuffleOnLock,
+                    onDetectSubject = vm::detectForegroundSubject,
+                    onCorrectMask = vm::correctSubjectMask,
+                    onApplyWallpaper = onApplyWallpaper,
                     onPickForeground = onPickForeground,
                     onClearForeground = vm::clearForeground,
                     onDismiss = { vm.wallpaperEditorOpen = false },

@@ -153,13 +153,15 @@ class GlassWallpaperService : WallpaperService() {
             sourceDirty = false
 
             val file = store.current()
-            val key = file?.let { "${it.path}:${it.lastModified()}" }
+            val key = file?.let { "${it.path}:${it.lastModified()}:${it.length()}:${store.revision()}" }
             if (key != loadedKey) {
                 bitmap = file?.let { store.decode(it, width, height) }
                 loadedKey = key
             }
             val foreground = store.foreground()
-            val foregroundKey = foreground?.let { "${it.path}:${it.lastModified()}" }
+            val foregroundKey = foreground?.let {
+                "${it.path}:${it.lastModified()}:${it.length()}:${store.revision()}"
+            }
             if (foregroundKey != loadedForegroundKey) {
                 foregroundBitmap = foreground?.let { store.decode(it, width, height) }
                 loadedForegroundKey = foregroundKey
@@ -193,14 +195,18 @@ class GlassWallpaperService : WallpaperService() {
         private fun drawScene(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
-            val dx = -shownX * w * Parallax.SHIFT_X
-            val dy = -shownY * h * Parallax.SHIFT_Y
+            val settings = applicationContext.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
+            val scale = settings.getFloat("wallpaper_scale", 1f).coerceIn(1f, 2f)
+            val dx = (settings.getFloat("wallpaper_x", 0f).coerceIn(-0.5f, 0.5f) -
+                shownX * Parallax.SHIFT_X) * w
+            val dy = (settings.getFloat("wallpaper_y", 0f).coerceIn(-0.5f, 0.5f) -
+                shownY * Parallax.SHIFT_Y) * h
 
             canvas.save()
             // Same transform the launcher applies to its own backdrop: zoom about the centre,
             // then shift, so home and lock line up.
             canvas.translate(w / 2f + dx, h / 2f + dy)
-            canvas.scale(Parallax.ZOOM, Parallax.ZOOM)
+            canvas.scale(Parallax.ZOOM * scale, Parallax.ZOOM * scale)
             canvas.translate(-w / 2f, -h / 2f)
 
             val photo = bitmap
@@ -217,7 +223,6 @@ class GlassWallpaperService : WallpaperService() {
             }
 
             foregroundBitmap?.let { subject ->
-                val settings = applicationContext.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
                 val scale = settings.getFloat("subject_scale", 1f).coerceIn(0.6f, 2f)
                 val x = settings.getFloat("subject_x", 0f).coerceIn(-0.5f, 0.5f)
                 val y = settings.getFloat("subject_y", 0f).coerceIn(-0.5f, 0.5f)
