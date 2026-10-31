@@ -52,6 +52,9 @@ uniform float2 lightDir;
 uniform float highlight;
 uniform float reflection;
 uniform float innerShade;
+uniform float2 touch;
+uniform float touchAmount;
+uniform float touchRadius;
 
 float2 clampPos(float2 p) {
     return clamp(p, float2(0.5), size - float2(0.5));
@@ -84,6 +87,14 @@ half4 main(float2 coord) {
     float bend = edge * edge;
 
     float2 offset = -normal * bend * strength;
+
+    // Finger: magnify the backdrop around the touch point, like a water drop under the glass.
+    // touchAmount is spring-driven from Kotlin, so it overshoots and settles on release.
+    float2 toTouch = touch - coord;
+    float touchDist = length(toTouch);
+    float finger = touchAmount * exp(-(touchDist * touchDist) / (touchRadius * touchRadius));
+    offset += (toTouch / max(touchDist, 1.0)) * finger * strength * 0.5;
+
     float chroma = dispersion * bend;
     half red = content.eval(clampPos(coord + offset * (1.0 + chroma))).r;
     half green = content.eval(clampPos(coord + offset)).g;
@@ -106,6 +117,9 @@ half4 main(float2 coord) {
     float spec = (pow(lit, 3.0) * rim + 0.35 * lit * edge * edge) * highlight;
     float bounce = away * away * rim * highlight * 0.35;
     rgb += half3(spec + bounce);
+
+    // Soft specular bloom under the finger.
+    rgb += half3(finger * (0.10 + 0.25 * highlight));
 
     rgb += half3((hash(coord) - 0.5) / 255.0);
     return half4(clamp(rgb, half3(0.0), half3(1.0)), 1.0);
@@ -131,6 +145,9 @@ class LensShader {
         highlight: Float,
         reflection: Float,
         innerShade: Float,
+        touch: Offset = Offset.Zero,
+        touchAmount: Float = 0f,
+        touchRadiusPx: Float = 1f,
     ): androidx.compose.ui.graphics.RenderEffect {
         shader.setFloatUniform("size", size.width.toFloat(), size.height.toFloat())
         shader.setFloatUniform("radius", radiusPx.coerceAtMost(minOf(size.width, size.height) / 2f))
@@ -141,6 +158,9 @@ class LensShader {
         shader.setFloatUniform("highlight", highlight.coerceIn(0f, 1f))
         shader.setFloatUniform("reflection", reflection.coerceIn(0f, 0.35f))
         shader.setFloatUniform("innerShade", innerShade.coerceIn(0f, 0.4f))
+        shader.setFloatUniform("touch", touch.x, touch.y)
+        shader.setFloatUniform("touchAmount", touchAmount.coerceIn(0f, 1f))
+        shader.setFloatUniform("touchRadius", touchRadiusPx.coerceAtLeast(1f))
 
         val lens = RenderEffect.createRuntimeShaderEffect(shader, "content")
         val effect = if (blurPx > 0.5f) {

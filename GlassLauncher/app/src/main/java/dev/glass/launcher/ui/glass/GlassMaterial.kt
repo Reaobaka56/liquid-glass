@@ -101,3 +101,6 @@ enum class GlassPreset(val label: String, val material: GlassMaterial) {
 
 /** The material glass surfaces use unless one is passed explicitly. */
 val LocalGlassMaterial = compositionLocalOf { GlassPreset.Clear.material }
+
+/** True when the system has animations off; glass skips press, spring and tilt-light motion. */
+val LocalReduceMotion = compositionLocalOf { false }

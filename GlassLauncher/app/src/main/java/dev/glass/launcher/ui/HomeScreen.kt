@@ -14,9 +14,12 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -77,6 +81,7 @@ import dev.glass.launcher.HomeWidgetStore
 import dev.glass.launcher.LauncherViewModel
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
 import dev.glass.launcher.ui.glass.LocalGlassQuality
+import dev.glass.launcher.ui.glass.LocalReduceMotion
 import dev.glass.launcher.ui.glass.rememberGlassQuality
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
@@ -145,6 +150,7 @@ fun HomeScreen(
         LocalGlassMaterial provides material,
         LocalGlassQuality provides rememberGlassQuality(),
         LocalIconSize provides settings.iconSizeDp.dp,
+        LocalReduceMotion provides !allowAnimations,
     ) {
         BackdropHost(wallpaper = vm.wallpaper, tilt = tilt) {
             Box(
@@ -374,10 +380,28 @@ fun HomeScreen(
             }
 
             // Drawer
+            // The drawer grows out of the swipe handle with a spring, like glass materialising.
+            val fromHandle = TransformOrigin(0.5f, 0.92f)
             AnimatedVisibility(
                 visible = vm.drawerOpen,
-                enter = fadeIn(),
-                exit = fadeOut(),
+                enter = if (allowAnimations) {
+                    fadeIn(tween(180)) + scaleIn(
+                        initialScale = 0.88f,
+                        transformOrigin = fromHandle,
+                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 380f),
+                    )
+                } else {
+                    fadeIn()
+                },
+                exit = if (allowAnimations) {
+                    fadeOut(tween(140)) + scaleOut(
+                        targetScale = 0.94f,
+                        transformOrigin = fromHandle,
+                        animationSpec = tween(160),
+                    )
+                } else {
+                    fadeOut()
+                },
             ) {
                 AppDrawer(
                     apps = vm.apps,

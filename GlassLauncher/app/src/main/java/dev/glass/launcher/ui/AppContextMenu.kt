@@ -1,6 +1,8 @@
 package dev.glass.launcher.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -28,11 +30,15 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -48,6 +54,7 @@ import dev.glass.launcher.AppEntry
 import dev.glass.launcher.AppRepository
 import dev.glass.launcher.AppShortcut
 import dev.glass.launcher.ui.glass.LocalGlassMaterial
+import dev.glass.launcher.ui.glass.LocalReduceMotion
 
 @Composable
 fun AppContextMenu(
@@ -66,16 +73,32 @@ fun AppContextMenu(
     val context = LocalContext.current
     val isSystem = AppRepository.isSystemApp(context, app.packageName)
 
+    // Pop-in: the icon and menu spring up from slightly smaller while the scrim fades in.
+    val reduceMotion = LocalReduceMotion.current
+    val pop = remember { Animatable(if (reduceMotion) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (!reduceMotion) pop.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 420f))
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .drawBehind {
+                drawRect(Color.Black.copy(alpha = 0.45f * pop.value.coerceIn(0f, 1f)))
+            }
             .pointerInput(Unit) { detectTapGestures { onDismiss() } },
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier
+                .padding(24.dp)
+                .graphicsLayer {
+                    val s = 0.85f + 0.15f * pop.value
+                    scaleX = s
+                    scaleY = s
+                    alpha = pop.value.coerceIn(0f, 1f)
+                },
         ) {
             // Lifted Icon
             Column(
@@ -107,6 +130,7 @@ fun AppContextMenu(
                     .pointerInput(Unit) { detectTapGestures { /* consume */ } },
                 cornerRadius = 28.dp,
                 material = LocalGlassMaterial.current.forOverlay(),
+                interactive = false,
             ) {
                 Column(
                     modifier = Modifier

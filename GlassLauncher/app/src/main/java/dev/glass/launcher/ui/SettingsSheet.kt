@@ -1,5 +1,7 @@
 package dev.glass.launcher.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,9 +26,12 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -35,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.glass.launcher.settings.LauncherSettings
 import dev.glass.launcher.ui.glass.GlassPreset
+import dev.glass.launcher.ui.glass.LocalReduceMotion
 
 /** Long-press menu on the home screen. */
 @Composable
@@ -83,10 +89,21 @@ fun LauncherSettingsSheet(
     onRequestDefaultHome: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Slides up with a soft spring and settles with a slight bounce.
+    val reduceMotion = LocalReduceMotion.current
+    val enter = remember { Animatable(if (reduceMotion) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (!reduceMotion) enter.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 320f))
+    }
+
     Scrim(onDismiss, contentAlignment = Alignment.BottomCenter) {
         GlassPanel(
             Modifier
                 .align(Alignment.BottomCenter)
+                .graphicsLayer {
+                    translationY = (1f - enter.value) * size.height * 0.35f
+                    alpha = enter.value.coerceIn(0f, 1f)
+                }
                 .fillMaxWidth()
                 .fillMaxHeight(0.85f)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
@@ -94,6 +111,7 @@ fun LauncherSettingsSheet(
                 // Keep touches on the sheet from reaching the scrim and closing it.
                 .pointerInput(Unit) { detectTapGestures { } },
             cornerRadius = 32.dp,
+            interactive = false, // Big surface with sliders: no squish or finger bulge.
         ) {
             Column(
                 Modifier
