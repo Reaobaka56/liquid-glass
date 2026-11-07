@@ -42,6 +42,5 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    // On-device subject segmentation for the depth-effect wallpaper (model via Play services).
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
 }

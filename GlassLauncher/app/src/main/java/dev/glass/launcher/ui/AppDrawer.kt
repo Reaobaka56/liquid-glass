@@ -408,28 +408,15 @@ fun AppIcon(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Every icon is masked to the same squircle, so mixed icon packs and adaptive shapes
-        // (circles, teardrops) all look like one iOS grid. Slight overscale trims the system mask.
-        Box(
-            Modifier
-                .size(LocalIconSize.current)
-                .clip(SquircleShape)
-                .background(Color(0xFF2C2C2E))
-                .border(0.75.dp, Color.White.copy(alpha = 0.18f), SquircleShape),
-        ) {
-            Image(
-                bitmap = app.icon,
-                contentDescription = app.label,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = 1.12f
-                        scaleY = 1.12f
-                    },
-            )
-        }
-        if (showLabel) {
+        AppIconArtwork(
+            original = app.icon,
+            label = app.label,
+            assignment = app.iconAssignment,
+            customIcon = app.customIcon,
+            modifier = Modifier,
+            size = LocalIconSize.current,
+        )
+        if (showLabel && LocalShowAppIconLabels.current) {
             Text(
                 text = app.label,
                 color = Color.White,

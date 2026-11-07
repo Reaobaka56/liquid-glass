@@ -32,6 +32,9 @@ data class Backdrop(
     val size: IntSize,
     val wallpaper: ImageBitmap?,
     val tilt: () -> Offset,
+    val wallpaperScale: Float,
+    val wallpaperX: Float,
+    val wallpaperY: Float,
 )
 
 val LocalBackdrop = compositionLocalOf<Backdrop?> { null }
@@ -44,6 +47,9 @@ val LocalBackdrop = compositionLocalOf<Backdrop?> { null }
 fun BackdropHost(
     wallpaper: ImageBitmap?,
     tilt: () -> Offset = NoTilt,
+    wallpaperScale: Float = 1f,
+    wallpaperX: Float = 0f,
+    wallpaperY: Float = 0f,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -54,8 +60,10 @@ fun BackdropHost(
             .fillMaxSize()
             .onSizeChanged { size = it },
     ) {
-        BackdropArt(wallpaper, Modifier.fillMaxSize(), tilt)
-        CompositionLocalProvider(LocalBackdrop provides Backdrop(size, wallpaper, tilt)) {
+        BackdropArt(wallpaper, Modifier.fillMaxSize(), tilt, wallpaperScale, wallpaperX, wallpaperY)
+        CompositionLocalProvider(
+            LocalBackdrop provides Backdrop(size, wallpaper, tilt, wallpaperScale, wallpaperX, wallpaperY),
+        ) {
             content()
         }
     }
@@ -75,13 +83,16 @@ fun BackdropArt(
     wallpaper: ImageBitmap?,
     modifier: Modifier = Modifier,
     tilt: () -> Offset = NoTilt,
+    wallpaperScale: Float = 1f,
+    wallpaperX: Float = 0f,
+    wallpaperY: Float = 0f,
 ) {
     val parallax = Modifier.graphicsLayer {
         val t = tilt()
-        scaleX = Parallax.ZOOM
-        scaleY = Parallax.ZOOM
-        translationX = -t.x * size.width * Parallax.SHIFT_X
-        translationY = -t.y * size.height * Parallax.SHIFT_Y
+        scaleX = Parallax.ZOOM * wallpaperScale
+        scaleY = Parallax.ZOOM * wallpaperScale
+        translationX = (wallpaperX - t.x * Parallax.SHIFT_X) * size.width
+        translationY = (wallpaperY - t.y * Parallax.SHIFT_Y) * size.height
     }
     if (wallpaper != null) {
         Image(

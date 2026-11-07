@@ -218,7 +218,14 @@ fun GlassPanel(
                         }
                     },
                 ) {
-                    BackdropArt(backdrop.wallpaper, Modifier.fillMaxSize(), backdrop.tilt)
+                    BackdropArt(
+                        backdrop.wallpaper,
+                        Modifier.fillMaxSize(),
+                        backdrop.tilt,
+                        backdrop.wallpaperScale,
+                        backdrop.wallpaperX,
+                        backdrop.wallpaperY,
+                    )
                 }
             }
         }
@@ -271,7 +278,7 @@ fun GlassPanel(
                         colors = listOf(
                             Color.White.copy(alpha = 0.58f * edge),
                             Color.White.copy(alpha = 0.12f * edge),
-                            Color(0xFFB8D9FF).copy(alpha = 0.24f * edge),
+                            Color(0xFF8FE5F3).copy(alpha = 0.24f * edge),
                             Color.White.copy(alpha = 0.32f * edge),
                         ),
                         start = Offset.Zero,
