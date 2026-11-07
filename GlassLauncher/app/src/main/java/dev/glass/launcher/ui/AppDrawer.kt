@@ -10,6 +10,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -55,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -406,11 +408,27 @@ fun AppIcon(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Image(
-            bitmap = app.icon,
-            contentDescription = app.label,
-            modifier = Modifier.size(LocalIconSize.current),
-        )
+        // Every icon is masked to the same squircle, so mixed icon packs and adaptive shapes
+        // (circles, teardrops) all look like one iOS grid. Slight overscale trims the system mask.
+        Box(
+            Modifier
+                .size(LocalIconSize.current)
+                .clip(SquircleShape)
+                .background(Color(0xFF2C2C2E))
+                .border(0.75.dp, Color.White.copy(alpha = 0.18f), SquircleShape),
+        ) {
+            Image(
+                bitmap = app.icon,
+                contentDescription = app.label,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.12f
+                        scaleY = 1.12f
+                    },
+            )
+        }
         if (showLabel) {
             Text(
                 text = app.label,
