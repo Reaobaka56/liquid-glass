@@ -111,6 +111,7 @@ fun LauncherSettingsSheet(
     onEditIcons: () -> Unit,
     onApplyTheme: () -> Unit,
     onRequestDefaultHome: () -> Unit,
+    onOpenLockStudio: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Slides up with a soft spring and settles with a slight bounce.
@@ -241,8 +242,10 @@ fun LauncherSettingsSheet(
                         ),
                     )
                 }
-                TextButton(onClick = onChangeWallpaper, modifier = Modifier.fillMaxWidth()) {
-                    Text("Change wallpaper", color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassButton("Lock studio", onOpenLockStudio, Modifier.weight(1f))
+                    GlassButton("Wallpaper", onChangeWallpaper, Modifier.weight(1f))
                 }
                 TextButton(onClick = onEditWallpaper, modifier = Modifier.fillMaxWidth()) {
                     Text("Wallpaper depth editor", color = Color.White)
@@ -482,7 +485,7 @@ private fun PresetChip(
 }
 
 @Composable
-private fun SettingSlider(
+internal fun SettingSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,

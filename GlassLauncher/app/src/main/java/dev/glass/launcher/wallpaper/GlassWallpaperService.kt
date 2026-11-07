@@ -10,6 +10,10 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
+import android.app.WallpaperManager
+import android.os.Build
+import dev.glass.launcher.settings.LockStyle
+import dev.glass.launcher.settings.LockStyleStore
 import android.service.wallpaper.WallpaperService
 import android.view.Choreographer
 import android.view.SurfaceHolder
@@ -39,6 +43,10 @@ class GlassWallpaperService : WallpaperService() {
         private val foregroundPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         private val blobPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val basePaint = Paint()
+        private val styleStore = LockStyleStore(applicationContext)
+        private val depthStore = DepthStore(applicationContext)
+        private var style = LockStyle()
+        private var subject: Bitmap? = null
 
         private var width = 0
         private var height = 0
@@ -66,6 +74,17 @@ class GlassWallpaperService : WallpaperService() {
             targetY = y
             requestFrame()
         }
+
+        private val timeTick = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (isLockEngine()) requestFrame()
+            }
+        }
+
+        /** Engine.getWallpaperFlags() exists from Android 14; earlier versions never draw the clock. */
+        private fun isLockEngine(): Boolean =
+            Build.VERSION.SDK_INT >= 34 &&
+                (wallpaperFlags and WallpaperManager.FLAG_LOCK) != 0 && !isPreview
 
         private val screenOff = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -151,6 +170,7 @@ class GlassWallpaperService : WallpaperService() {
         private fun ensureBitmap() {
             if (!sourceDirty || width == 0 || height == 0) return
             sourceDirty = false
+            style = styleStore.load()
 
             val file = store.current()
             val key = file?.let { "${it.path}:${it.lastModified()}:${it.length()}:${store.revision()}" }
@@ -202,7 +222,6 @@ class GlassWallpaperService : WallpaperService() {
             val dy = (settings.getFloat("wallpaper_y", 0f).coerceIn(-0.5f, 0.5f) -
                 shownY * Parallax.SHIFT_Y) * h
 
-            canvas.save()
             // Same transform the launcher applies to its own backdrop: zoom about the centre,
             // then shift, so home and lock line up.
             canvas.translate(w / 2f + dx, h / 2f + dy)
@@ -214,12 +233,14 @@ class GlassWallpaperService : WallpaperService() {
                 // "Crop" scaling: fill the screen, centred.
                 val s = max(w / photo.width, h / photo.height)
                 canvas.save()
-                canvas.translate((w - photo.width * s) / 2f, (h - photo.height * s) / 2f)
-                canvas.scale(s, s)
-                canvas.drawBitmap(photo, 0f, 0f, photoPaint)
+                canvas.translate(
+                    w / 2f - shownX * w * Parallax.SHIFT_X * depth,
+                    h / 2f - shownY * h * Parallax.SHIFT_Y * depth,
+                )
+                canvas.scale(Parallax.ZOOM, Parallax.ZOOM)
+                canvas.translate(-w / 2f, -h / 2f)
+                draw()
                 canvas.restore()
-            } else {
-                drawAurora(canvas, w, h)
             }
 
             foregroundBitmap?.let { subject ->

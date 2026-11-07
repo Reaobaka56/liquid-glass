@@ -26,7 +26,18 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
+import dev.glass.launcher.FolderData
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,6 +83,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import kotlin.math.abs
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,6 +115,8 @@ import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private const val MAX_WIDGET_DP = 320
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -162,6 +177,11 @@ fun HomeScreen(
     var showWeatherDisclosure by remember { mutableStateOf(false) }
     var showMediaDisclosure by remember { mutableStateOf(false) }
     var pendingWeatherPage by remember { mutableStateOf(0) }
+
+    // Drag-and-drop state shared by the icons of the visible pages.
+    var dragPkg by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    val bounds = remember { mutableStateMapOf<String, Rect>() }
 
     // On a home screen, Back only closes top layer
     BackHandler {
@@ -242,9 +262,7 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        TextButton(onClick = { vm.settingsOpen = true }) {
-                            Text("Settings", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        }
+                        GlassButton("Settings", onClick = { vm.settingsOpen = true })
                     }
                     ClockCard(settings, onClick = { vm.clockEditorOpen = true })
 
@@ -252,17 +270,14 @@ fun HomeScreen(
 
                     // Edit Mode Header Controls
                     if (vm.isEditMode) {
-                        Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = { vm.addHomePages() }) {
-                                    Text("+ Page", color = Color.White, fontWeight = FontWeight.Bold)
-                                }
+                        Column(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("+ Page", { vm.addHomePages() }, Modifier.weight(1f))
                                 if (vm.homePages.size > 1) {
-                                    TextButton(onClick = {
+                                    GlassButton("Remove page", {
                                         val page = pagerState.currentPage
                                         // Detach this page's widgets first so their host ids are freed.
                                         vm.widgets.filter { it.page == page }
@@ -287,30 +302,16 @@ fun HomeScreen(
                                 TextButton(onClick = { onAddWidget(pagerState.currentPage) }) {
                                     Text("+ Add widget", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 }
+                                GlassButton("Done", { vm.isEditMode = false }, Modifier.weight(1f))
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = onPickWallpaper) {
-                                    Text("Wallpaper", color = Color.White)
-                                }
-                                TextButton(onClick = { vm.settingsOpen = true }) {
-                                    Text("Glass settings", color = Color.White)
-                                }
-                                TextButton(onClick = onOpenCompanionPreview) {
-                                    Text("Lock preview", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("+ Widget", { onAddWidget(pagerState.currentPage) }, Modifier.weight(1f))
+                                GlassButton("Wallpaper", onPickWallpaper, Modifier.weight(1f))
+                                GlassButton("Lock studio", { vm.lockStudioOpen = true }, Modifier.weight(1f))
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = onRequestDefaultHome) {
-                                    Text("Set as default home app", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("Glass settings", { vm.settingsOpen = true }, Modifier.weight(1f))
+                                GlassButton("Default home app", onRequestDefaultHome, Modifier.weight(1f))
                             }
                         }
                     }
@@ -355,14 +356,24 @@ fun HomeScreen(
                     ) { pageIdx ->
                         val pageApps = vm.homePages.getOrNull(pageIdx) ?: emptyList()
 
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(vertical = 8.dp),
                         ) {
+                            vm.widgets.filter { it.page == pageIdx }.forEach { widget ->
+                                HomeWidgetSurface(
+                                    widget = widget,
+                                    appWidgetHost = appWidgetHost,
+                                    isEditMode = vm.isEditMode,
+                                    onResize = { delta -> vm.resizeWidget(widget.appWidgetId, delta) },
+                                    onRemove = { onRemoveWidget(widget.appWidgetId) },
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                             if (pageApps.isEmpty()) {
                                 Box(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
@@ -376,14 +387,76 @@ fun HomeScreen(
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(4),
                                     contentPadding = PaddingValues(8.dp),
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
                                 ) {
                                     items(pageApps, key = { it.packageName }) { app ->
+                                        val isFolder = FolderData.isFolderKey(app.packageName)
+                                        val dragging = dragPkg == app.packageName
                                         Box(
                                             modifier = Modifier
+                                                .zIndex(if (dragging) 1f else 0f)
+                                                .onGloballyPositioned { bounds[app.packageName] = it.boundsInRoot() }
+                                                .graphicsLayer {
+                                                    if (dragging) {
+                                                        translationX = dragOffset.x
+                                                        translationY = dragOffset.y
+                                                        scaleX = 1.12f
+                                                        scaleY = 1.12f
+                                                        alpha = 0.92f
+                                                    }
+                                                }
+                                                .then(
+                                                    if (vm.isEditMode) {
+                                                        Modifier.pointerInput(app.packageName, pageIdx) {
+                                                            detectDragGestures(
+                                                                onDragStart = {
+                                                                    dragPkg = app.packageName
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                                onDrag = { change, delta ->
+                                                                    change.consume()
+                                                                    dragOffset += delta
+                                                                },
+                                                                onDragEnd = {
+                                                                    val from = bounds[app.packageName]
+                                                                    val page = vm.homePages.getOrNull(pageIdx)
+                                                                    if (from != null && page != null) {
+                                                                        val center = from.center + dragOffset
+                                                                        val hit = bounds.entries.firstOrNull { (key, r) ->
+                                                                            key != app.packageName && r.contains(center) &&
+                                                                                page.any { it.packageName == key }
+                                                                        }
+                                                                        if (hit != null) {
+                                                                            val r = hit.value
+                                                                            val inner = Rect(
+                                                                                r.left + r.width * 0.25f, r.top + r.height * 0.25f,
+                                                                                r.right - r.width * 0.25f, r.bottom - r.height * 0.25f,
+                                                                            )
+                                                                            if (inner.contains(center) && !isFolder) {
+                                                                                vm.dropOnto(app.packageName, hit.key)
+                                                                            } else {
+                                                                                val to = page.indexOfFirst { it.packageName == hit.key }
+                                                                                val fromIdx = page.indexOfFirst { it.packageName == app.packageName }
+                                                                                if (to >= 0 && fromIdx >= 0) vm.moveHomeItem(pageIdx, fromIdx, pageIdx, to)
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    dragPkg = null
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                                onDragCancel = {
+                                                                    dragPkg = null
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Modifier
+                                                    },
+                                                )
                                                 .rotate(if (vm.isEditMode) wiggleAngle else 0f)
                                                 .semantics {
-                                                    customActions = listOf(
+                                                    customActions = if (isFolder) emptyList() else listOf(
                                                         CustomAccessibilityAction("Remove from Home") {
                                                             vm.removeFromHome(app)
                                                             true
@@ -399,13 +472,19 @@ fun HomeScreen(
                                                 app = app,
                                                 showLabel = true,
                                                 onClick = {
-                                                    if (vm.isEditMode) {
-                                                        vm.openContextMenu(app)
-                                                    } else {
-                                                        launch(app)
+                                                    when {
+                                                        isFolder -> vm.openFolderId = app.packageName.removePrefix(FolderData.FOLDER_PREFIX)
+                                                        vm.isEditMode -> vm.openContextMenu(app)
+                                                        else -> launch(app)
                                                     }
                                                 },
-                                                onLongClick = { vm.openContextMenu(app) },
+                                                onLongClick = {
+                                                    if (isFolder) {
+                                                        vm.openFolderId = app.packageName.removePrefix(FolderData.FOLDER_PREFIX)
+                                                    } else {
+                                                        vm.openContextMenu(app)
+                                                    }
+                                                },
                                             )
                                         }
                                     }
@@ -552,6 +631,10 @@ fun HomeScreen(
                     onRequestDefaultHome = {
                         vm.settingsOpen = false
                         onRequestDefaultHome()
+                    },
+                    onOpenLockStudio = {
+                        vm.settingsOpen = false
+                        vm.lockStudioOpen = true
                     },
                     onDismiss = { vm.settingsOpen = false },
                 )
@@ -754,11 +837,24 @@ private fun HomeWidgetSurface(
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(widget.heightDp.dp),
+                    .height(widget.heightDp.coerceAtMost(MAX_WIDGET_DP).dp)
+                    // Vertical drags inside a widget belong to the widget (lists, scrolling),
+                    // not to the home screen's swipe-for-drawer gesture.
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { c ->
+                                    val d = c.positionChange()
+                                    if (abs(d.y) > abs(d.x)) c.consume()
+                                }
+                            } while (event.changes.any { it.pressed })
+                        }
+                    },
+                // createView already binds the provider; binding twice just resets the view.
                 factory = { viewContext ->
-                    appWidgetHost.createView(viewContext, widget.appWidgetId, providerInfo).apply {
-                        setAppWidget(widget.appWidgetId, providerInfo)
-                    }
+                    appWidgetHost.createView(viewContext, widget.appWidgetId, providerInfo)
                 },
                 update = { hostView ->
                     hostView.updateWidgetSize(widgetWidthDp, widget.heightDp)
@@ -778,6 +874,10 @@ private fun AppWidgetHostView.updateWidgetSize(widthDp: Int, heightDp: Int) {
     }
 }
 
+/**
+ * Card-less clock straight on the wallpaper (iOS style), drawn with the same style the lock
+ * screen uses. Weight, colour, size and the date toggle follow the Lock studio.
+ */
 @Composable
 private fun ClockCard(settings: LauncherSettings, onClick: () -> Unit) {
     val context = LocalContext.current
@@ -788,6 +888,20 @@ private fun ClockCard(settings: LauncherSettings, onClick: () -> Unit) {
             delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
+    val weight = when {
+        style.clockWeight <= 150 -> FontWeight.Thin
+        style.clockWeight <= 350 -> FontWeight.Light
+        style.clockWeight <= 450 -> FontWeight.Normal
+        style.clockWeight <= 550 -> FontWeight.Medium
+        style.clockWeight <= 750 -> FontWeight.Bold
+        else -> FontWeight.Black
+    }
+    val color = Color(style.clockColor)
+    val shadow = androidx.compose.ui.graphics.Shadow(
+        color = Color.Black.copy(alpha = 0.35f),
+        offset = androidx.compose.ui.geometry.Offset(0f, 3f),
+        blurRadius = 12f,
+    )
 
     val clockSize by animateFloatAsState(settings.clockSizeSp, label = "clock-size")
     val clockColor by animateColorAsState(Color(settings.clockColor), label = "clock-color")
@@ -836,6 +950,13 @@ private fun ClockCard(settings: LauncherSettings, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        Text(
+            text = now.format(DateTimeFormatter.ofPattern("HH:mm")),
+            color = color,
+            fontSize = (84 * style.clockScale).sp,
+            fontWeight = weight,
+            style = androidx.compose.ui.text.TextStyle(shadow = shadow),
+        )
     }
 }
 
