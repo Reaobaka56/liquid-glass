@@ -23,6 +23,8 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -67,6 +69,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import kotlin.math.abs
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.viewinterop.AndroidView
@@ -89,6 +93,8 @@ import dev.glass.launcher.ui.glass.rememberGlassQuality
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+
+private const val MAX_WIDGET_DP = 320
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -240,17 +246,6 @@ fun HomeScreen(
                         }
                     }
 
-                    vm.widgets.filter { it.page == pagerState.currentPage }.forEach { widget ->
-                        Spacer(Modifier.height(8.dp))
-                        HomeWidgetSurface(
-                            widget = widget,
-                            appWidgetHost = appWidgetHost,
-                            isEditMode = vm.isEditMode,
-                            onResize = { delta -> vm.resizeWidget(widget.appWidgetId, delta) },
-                            onRemove = { onRemoveWidget(widget.appWidgetId) },
-                        )
-                    }
-
                     // Multi-page Grid Pager
                     HorizontalPager(
                         state = pagerState,
@@ -260,14 +255,24 @@ fun HomeScreen(
                     ) { pageIdx ->
                         val pageApps = vm.homePages.getOrNull(pageIdx) ?: emptyList()
 
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(vertical = 8.dp),
                         ) {
+                            vm.widgets.filter { it.page == pageIdx }.forEach { widget ->
+                                HomeWidgetSurface(
+                                    widget = widget,
+                                    appWidgetHost = appWidgetHost,
+                                    isEditMode = vm.isEditMode,
+                                    onResize = { delta -> vm.resizeWidget(widget.appWidgetId, delta) },
+                                    onRemove = { onRemoveWidget(widget.appWidgetId) },
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
                             if (pageApps.isEmpty()) {
                                 Box(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
@@ -281,7 +286,7 @@ fun HomeScreen(
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(4),
                                     contentPadding = PaddingValues(8.dp),
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
                                 ) {
                                     items(pageApps, key = { it.packageName }) { app ->
                                         Box(
@@ -515,11 +520,24 @@ private fun HomeWidgetSurface(
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(widget.heightDp.dp),
+                    .height(widget.heightDp.coerceAtMost(MAX_WIDGET_DP).dp)
+                    // Vertical drags inside a widget belong to the widget (lists, scrolling),
+                    // not to the home screen's swipe-for-drawer gesture.
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { c ->
+                                    val d = c.positionChange()
+                                    if (abs(d.y) > abs(d.x)) c.consume()
+                                }
+                            } while (event.changes.any { it.pressed })
+                        }
+                    },
+                // createView already binds the provider; binding twice just resets the view.
                 factory = { viewContext ->
-                    appWidgetHost.createView(viewContext, widget.appWidgetId, providerInfo).apply {
-                        setAppWidget(widget.appWidgetId, providerInfo)
-                    }
+                    appWidgetHost.createView(viewContext, widget.appWidgetId, providerInfo)
                 },
                 update = { hostView ->
                     hostView.updateWidgetSize(widgetWidthDp, widget.heightDp)

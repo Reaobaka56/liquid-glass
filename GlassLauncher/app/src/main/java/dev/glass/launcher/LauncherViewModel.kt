@@ -86,7 +86,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         if (widgets.any { it.appWidgetId == appWidgetId }) return
         widgets = widgets + HomeWidgetEntry(
             appWidgetId = appWidgetId,
-            page = page.coerceAtLeast(0),
+            page = page.coerceIn(0, (homePages.size - 1).coerceAtLeast(0)),
             heightDp = 180,
         )
         persistWidgets()
