@@ -26,6 +26,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.zIndex
+import dev.glass.launcher.FolderData
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -141,10 +150,16 @@ fun HomeScreen(
 
     val pagerState = rememberPagerState(pageCount = { vm.homePages.size })
 
+    // Drag-and-drop state shared by the icons of the visible pages.
+    var dragPkg by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    val bounds = remember { mutableStateMapOf<String, Rect>() }
+
     // On a home screen, Back only closes top layer
     BackHandler {
         when {
             vm.lockStudioOpen -> vm.lockStudioOpen = false
+            vm.openFolderId != null -> vm.openFolderId = null
             vm.settingsOpen -> vm.settingsOpen = false
             vm.menuOpen -> vm.closeContextMenu()
             vm.isEditMode -> vm.isEditMode = false
@@ -289,11 +304,73 @@ fun HomeScreen(
                                     modifier = Modifier.fillMaxWidth().weight(1f),
                                 ) {
                                     items(pageApps, key = { it.packageName }) { app ->
+                                        val isFolder = FolderData.isFolderKey(app.packageName)
+                                        val dragging = dragPkg == app.packageName
                                         Box(
                                             modifier = Modifier
+                                                .zIndex(if (dragging) 1f else 0f)
+                                                .onGloballyPositioned { bounds[app.packageName] = it.boundsInRoot() }
+                                                .graphicsLayer {
+                                                    if (dragging) {
+                                                        translationX = dragOffset.x
+                                                        translationY = dragOffset.y
+                                                        scaleX = 1.12f
+                                                        scaleY = 1.12f
+                                                        alpha = 0.92f
+                                                    }
+                                                }
+                                                .then(
+                                                    if (vm.isEditMode) {
+                                                        Modifier.pointerInput(app.packageName, pageIdx) {
+                                                            detectDragGestures(
+                                                                onDragStart = {
+                                                                    dragPkg = app.packageName
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                                onDrag = { change, delta ->
+                                                                    change.consume()
+                                                                    dragOffset += delta
+                                                                },
+                                                                onDragEnd = {
+                                                                    val from = bounds[app.packageName]
+                                                                    val page = vm.homePages.getOrNull(pageIdx)
+                                                                    if (from != null && page != null) {
+                                                                        val center = from.center + dragOffset
+                                                                        val hit = bounds.entries.firstOrNull { (key, r) ->
+                                                                            key != app.packageName && r.contains(center) &&
+                                                                                page.any { it.packageName == key }
+                                                                        }
+                                                                        if (hit != null) {
+                                                                            val r = hit.value
+                                                                            val inner = Rect(
+                                                                                r.left + r.width * 0.25f, r.top + r.height * 0.25f,
+                                                                                r.right - r.width * 0.25f, r.bottom - r.height * 0.25f,
+                                                                            )
+                                                                            if (inner.contains(center) && !isFolder) {
+                                                                                vm.dropOnto(app.packageName, hit.key)
+                                                                            } else {
+                                                                                val to = page.indexOfFirst { it.packageName == hit.key }
+                                                                                val fromIdx = page.indexOfFirst { it.packageName == app.packageName }
+                                                                                if (to >= 0 && fromIdx >= 0) vm.moveHomeItem(pageIdx, fromIdx, pageIdx, to)
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    dragPkg = null
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                                onDragCancel = {
+                                                                    dragPkg = null
+                                                                    dragOffset = Offset.Zero
+                                                                },
+                                                            )
+                                                        }
+                                                    } else {
+                                                        Modifier
+                                                    },
+                                                )
                                                 .rotate(if (vm.isEditMode) wiggleAngle else 0f)
                                                 .semantics {
-                                                    customActions = listOf(
+                                                    customActions = if (isFolder) emptyList() else listOf(
                                                         CustomAccessibilityAction("Remove from Home") {
                                                             vm.removeFromHome(app)
                                                             true
@@ -309,13 +386,19 @@ fun HomeScreen(
                                                 app = app,
                                                 showLabel = true,
                                                 onClick = {
-                                                    if (vm.isEditMode) {
-                                                        vm.openContextMenu(app)
-                                                    } else {
-                                                        launch(app)
+                                                    when {
+                                                        isFolder -> vm.openFolderId = app.packageName.removePrefix(FolderData.FOLDER_PREFIX)
+                                                        vm.isEditMode -> vm.openContextMenu(app)
+                                                        else -> launch(app)
                                                     }
                                                 },
-                                                onLongClick = { vm.openContextMenu(app) },
+                                                onLongClick = {
+                                                    if (isFolder) {
+                                                        vm.openFolderId = app.packageName.removePrefix(FolderData.FOLDER_PREFIX)
+                                                    } else {
+                                                        vm.openContextMenu(app)
+                                                    }
+                                                },
                                             )
                                         }
                                     }
@@ -453,6 +536,20 @@ fun HomeScreen(
                     },
                     onDismiss = { vm.settingsOpen = false },
                 )
+            }
+
+            vm.openFolderId?.let { id ->
+                val folder = vm.folders.firstOrNull { it.id == id }
+                if (folder != null) {
+                    FolderOverlay(
+                        name = folder.name,
+                        apps = folder.packages.mapNotNull { pkg -> vm.apps.firstOrNull { it.packageName == pkg } },
+                        onRename = { vm.renameFolder(id, it) },
+                        onLaunch = { vm.openFolderId = null; launch(it) },
+                        onRemove = { vm.removeFromFolder(id, it.packageName) },
+                        onDismiss = { vm.openFolderId = null },
+                    )
+                }
             }
 
             if (vm.lockStudioOpen) {

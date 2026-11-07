@@ -9,7 +9,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color as AColor
+import android.graphics.Paint
+import android.graphics.RectF
+import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.glass.launcher.settings.LauncherSettings
@@ -71,6 +78,14 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         lockStyleStore.save(style)
     }
 
+    private val folderStore = FolderStore(app)
+
+    var folders by mutableStateOf(folderStore.load())
+        private set
+
+    /** Folder shown open, or null. */
+    var openFolderId by mutableStateOf<String?>(null)
+
     private val store = WallpaperStore(app)
     private val widgetStore = HomeWidgetStore(app)
     private val tiltTracker = TiltTracker(app) { x, y -> tilt = Offset(x, y) }
@@ -123,6 +138,13 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
             val byPackage = loaded.associateBy { it.packageName }
 
+            // Folders lose uninstalled apps and disappear when empty.
+            folders = folders
+                .map { f -> f.copy(packages = f.packages.filter { it in byPackage }) }
+                .filter { it.packages.isNotEmpty() }
+            folderStore.save(folders)
+            val lookup = byPackage + folders.associate { it.key to folderEntry(it, byPackage) }
+
             // Restore dock or calculate candidates
             val savedDockPkgs = withContext(Dispatchers.IO) { AppRepository.loadDockPackages(ctx) }
             val dockPkgs = if (savedDockPkgs != null) {
@@ -144,7 +166,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 val pageCount = maxOf(savedLayout.pageCount, maxPage + 1)
                 val pagesList = MutableList(pageCount) { mutableListOf<AppEntry>() }
                 savedLayout.items.sortedWith(compareBy({ it.page }, { it.position })).forEach { item ->
-                    byPackage[item.packageName]?.let { app ->
+                    lookup[item.packageName]?.let { app ->
                         if (item.page in pagesList.indices) {
                             pagesList[item.page].add(app)
                         }
@@ -250,6 +272,102 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         pages[toPage].add(clampedToPos, item)
         homePages = pages
         persistHomeLayout()
+    }
+
+    // ---- Folders ----
+
+    private fun folderEntry(f: FolderData, byPackage: Map<String, AppEntry> = apps.associateBy { it.packageName }): AppEntry {
+        val icons = f.packages.mapNotNull { byPackage[it]?.icon }
+        return AppEntry(f.name, f.key, composeFolderIcon(icons))
+    }
+
+    /** Up to nine mini icons on a frosted tile, like an iOS folder. */
+    private fun composeFolderIcon(icons: List<androidx.compose.ui.graphics.ImageBitmap>): androidx.compose.ui.graphics.ImageBitmap {
+        val size = 192
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        paint.color = AColor.argb(110, 255, 255, 255)
+        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+        val cell = 48f
+        val gap = (size - cell * 3) / 4f
+        icons.take(9).forEachIndexed { i, icon ->
+            val col = i % 3
+            val row = i / 3
+            val x = gap + col * (cell + gap)
+            val y = gap + row * (cell + gap)
+            canvas.drawBitmap(icon.asAndroidBitmap(), null, RectF(x, y, x + cell, y + cell), paint)
+        }
+        return bmp.asImageBitmap()
+    }
+
+    private fun persistFolders() = folderStore.save(folders)
+
+    /** Swap every folder entry on the pages for a fresh one (new icon/name), dropping empty ones. */
+    private fun refreshFolderEntries() {
+        val byPackage = apps.associateBy { it.packageName }
+        val byKey = folders.associateBy { it.key }
+        homePages = homePages.map { page ->
+            page.mapNotNull { entry ->
+                if (!FolderData.isFolderKey(entry.packageName)) entry
+                else byKey[entry.packageName]?.let { folderEntry(it, byPackage) }
+            }
+        }
+        persistHomeLayout()
+    }
+
+    /** Dropping [draggedPkg] on [targetPkg]: join the folder, or make a new one out of the two. */
+    fun dropOnto(draggedPkg: String, targetPkg: String) {
+        if (draggedPkg == targetPkg || FolderData.isFolderKey(draggedPkg)) return
+        val dragged = apps.firstOrNull { it.packageName == draggedPkg } ?: return
+        if (FolderData.isFolderKey(targetPkg)) {
+            folders = folders.map {
+                if (it.key == targetPkg && draggedPkg !in it.packages) it.copy(packages = it.packages + draggedPkg) else it
+            }
+        } else {
+            val target = apps.firstOrNull { it.packageName == targetPkg } ?: return
+            val folder = FolderData(UUID.randomUUID().toString().take(8), "Folder", listOf(target.packageName, dragged.packageName))
+            folders = folders + folder
+            // The target's slot becomes the folder.
+            homePages = homePages.map { page ->
+                page.map { if (it.packageName == targetPkg) AppEntry(folder.name, folder.key, dragged.icon) else it }
+            }
+        }
+        homePages = homePages.map { page -> page.filter { it.packageName != draggedPkg } }
+        persistFolders()
+        refreshFolderEntries()
+    }
+
+    fun renameFolder(id: String, name: String) {
+        folders = folders.map { if (it.id == id) it.copy(name = name.ifBlank { "Folder" }.take(24)) else it }
+        persistFolders()
+        refreshFolderEntries()
+    }
+
+    /** Takes an app out of a folder and puts it back on the page that holds the folder. */
+    fun removeFromFolder(folderId: String, pkg: String) {
+        val folder = folders.firstOrNull { it.id == folderId } ?: return
+        val app = apps.firstOrNull { it.packageName == pkg } ?: return
+        val page = homePages.indexOfFirst { p -> p.any { it.packageName == folder.key } }.coerceAtLeast(0)
+        val remaining = folder.packages - pkg
+        if (remaining.size <= 1) {
+            // A folder of one is just an app: put the survivor where the folder was.
+            val survivor = remaining.firstOrNull()?.let { r -> apps.firstOrNull { it.packageName == r } }
+            homePages = homePages.map { p ->
+                p.flatMap { e ->
+                    if (e.packageName == folder.key) listOfNotNull(survivor, app) else listOf(e)
+                }
+            }
+            folders = folders.filterNot { it.id == folderId }
+            openFolderId = null
+        } else {
+            folders = folders.map { if (it.id == folderId) it.copy(packages = remaining) else it }
+            val pages = homePages.map { it.toMutableList() }.toMutableList()
+            if (page in pages.indices) pages[page].add(app)
+            homePages = pages
+        }
+        persistFolders()
+        refreshFolderEntries()
     }
 
     private fun persistHomeLayout() {
