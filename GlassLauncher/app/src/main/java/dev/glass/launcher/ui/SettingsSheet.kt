@@ -26,7 +26,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -89,6 +88,7 @@ fun LauncherSettingsSheet(
     onChangeWallpaper: () -> Unit,
     onOpenCompanionPreview: () -> Unit,
     onRequestDefaultHome: () -> Unit,
+    onOpenLockStudio: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Slides up with a soft spring and settles with a slight bounce.
@@ -183,14 +183,15 @@ fun LauncherSettingsSheet(
                         ),
                     )
                 }
-                TextButton(onClick = onChangeWallpaper, modifier = Modifier.fillMaxWidth()) {
-                    Text("Change wallpaper", color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassButton("Lock studio", onOpenLockStudio, Modifier.weight(1f))
+                    GlassButton("Wallpaper", onChangeWallpaper, Modifier.weight(1f))
                 }
-                TextButton(onClick = onOpenCompanionPreview, modifier = Modifier.fillMaxWidth()) {
-                    Text("Lock screen preview", color = Color.White)
-                }
-                TextButton(onClick = onRequestDefaultHome, modifier = Modifier.fillMaxWidth()) {
-                    Text("Set as default home app", color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlassButton("Lock preview", onOpenCompanionPreview, Modifier.weight(1f))
+                    GlassButton("Default home app", onRequestDefaultHome, Modifier.weight(1f))
                 }
             }
         }
@@ -222,7 +223,7 @@ private fun PresetChip(
 }
 
 @Composable
-private fun SettingSlider(
+internal fun SettingSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,

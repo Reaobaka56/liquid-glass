@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.glass.launcher.settings.LauncherSettings
+import dev.glass.launcher.settings.LockStyle
+import dev.glass.launcher.settings.LockStyleStore
 import dev.glass.launcher.wallpaper.GlassWallpaperService
 import dev.glass.launcher.wallpaper.TiltTracker
 import dev.glass.launcher.wallpaper.WallpaperStore
@@ -55,6 +57,19 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     var showUsagePermissionDialog by mutableStateOf(false)
 
     val settings = LauncherSettings(app)
+
+    private val lockStyleStore = LockStyleStore(app)
+
+    /** Clock look shared by the home screen, the studio and the lock-screen wallpaper. */
+    var lockStyle by mutableStateOf(lockStyleStore.load())
+        private set
+
+    var lockStudioOpen by mutableStateOf(false)
+
+    fun updateLockStyle(style: LockStyle) {
+        lockStyle = style
+        lockStyleStore.save(style)
+    }
 
     private val store = WallpaperStore(app)
     private val widgetStore = HomeWidgetStore(app)

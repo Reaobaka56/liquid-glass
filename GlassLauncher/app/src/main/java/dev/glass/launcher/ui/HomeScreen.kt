@@ -138,6 +138,7 @@ fun HomeScreen(
     // On a home screen, Back only closes top layer
     BackHandler {
         when {
+            vm.lockStudioOpen -> vm.lockStudioOpen = false
             vm.settingsOpen -> vm.settingsOpen = false
             vm.menuOpen -> vm.closeContextMenu()
             vm.isEditMode -> vm.isEditMode = false
@@ -202,72 +203,39 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        TextButton(onClick = { vm.settingsOpen = true }) {
-                            Text("Settings", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        }
+                        GlassButton("Settings", onClick = { vm.settingsOpen = true })
                     }
-                    ClockCard()
+                    HomeClock(vm.lockStyle)
 
                     Spacer(Modifier.height(12.dp))
 
                     // Edit Mode Header Controls
                     if (vm.isEditMode) {
-                        Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = { vm.addHomePages() }) {
-                                    Text("+ Page", color = Color.White, fontWeight = FontWeight.Bold)
-                                }
+                        Column(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("+ Page", { vm.addHomePages() }, Modifier.weight(1f))
                                 if (vm.homePages.size > 1) {
-                                    TextButton(onClick = {
+                                    GlassButton("Remove page", {
                                         val page = pagerState.currentPage
                                         // Detach this page's widgets first so their host ids are freed.
                                         vm.widgets.filter { it.page == page }
                                             .forEach { onRemoveWidget(it.appWidgetId) }
                                         vm.removeHomePage(page)
-                                    }) {
-                                        Text("Remove page", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
-                                    }
+                                    }, Modifier.weight(1f))
                                 }
-                                TextButton(onClick = { vm.isEditMode = false }) {
-                                    Text("Done", color = Color.White, fontWeight = FontWeight.Bold)
-                                }
+                                GlassButton("Done", { vm.isEditMode = false }, Modifier.weight(1f))
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = { onAddWidget(pagerState.currentPage) }) {
-                                    Text("+ Add widget", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("+ Widget", { onAddWidget(pagerState.currentPage) }, Modifier.weight(1f))
+                                GlassButton("Wallpaper", onPickWallpaper, Modifier.weight(1f))
+                                GlassButton("Lock studio", { vm.lockStudioOpen = true }, Modifier.weight(1f))
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = onPickWallpaper) {
-                                    Text("Wallpaper", color = Color.White)
-                                }
-                                TextButton(onClick = { vm.settingsOpen = true }) {
-                                    Text("Glass settings", color = Color.White)
-                                }
-                                TextButton(onClick = onOpenCompanionPreview) {
-                                    Text("Lock preview", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TextButton(onClick = onRequestDefaultHome) {
-                                    Text("Set as default home app", color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GlassButton("Glass settings", { vm.settingsOpen = true }, Modifier.weight(1f))
+                                GlassButton("Default home app", onRequestDefaultHome, Modifier.weight(1f))
                             }
                         }
                     }
@@ -474,7 +442,20 @@ fun HomeScreen(
                         vm.settingsOpen = false
                         onRequestDefaultHome()
                     },
+                    onOpenLockStudio = {
+                        vm.settingsOpen = false
+                        vm.lockStudioOpen = true
+                    },
                     onDismiss = { vm.settingsOpen = false },
+                )
+            }
+
+            if (vm.lockStudioOpen) {
+                LockStudio(
+                    style = vm.lockStyle,
+                    onStyleChange = vm::updateLockStyle,
+                    onPickWallpaper = onPickWallpaper,
+                    onClose = { vm.lockStudioOpen = false },
                 )
             }
         }
@@ -558,8 +539,12 @@ private fun AppWidgetHostView.updateWidgetSize(widthDp: Int, heightDp: Int) {
     }
 }
 
+/**
+ * Card-less clock straight on the wallpaper (iOS style), drawn with the same style the lock
+ * screen uses. Weight, colour, size and the date toggle follow the Lock studio.
+ */
 @Composable
-private fun ClockCard() {
+private fun HomeClock(style: LockStyle) {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -567,21 +552,38 @@ private fun ClockCard() {
             delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
+    val weight = when {
+        style.clockWeight <= 150 -> FontWeight.Thin
+        style.clockWeight <= 350 -> FontWeight.Light
+        style.clockWeight <= 450 -> FontWeight.Normal
+        style.clockWeight <= 550 -> FontWeight.Medium
+        style.clockWeight <= 750 -> FontWeight.Bold
+        else -> FontWeight.Black
+    }
+    val color = Color(style.clockColor)
+    val shadow = androidx.compose.ui.graphics.Shadow(
+        color = Color.Black.copy(alpha = 0.35f),
+        offset = androidx.compose.ui.geometry.Offset(0f, 3f),
+        blurRadius = 12f,
+    )
 
-    GlassPanel(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 24.dp, vertical = 20.dp)) {
-            Text(
-                text = now.format(DateTimeFormatter.ofPattern("HH:mm")),
-                color = Color.White,
-                fontSize = 56.sp,
-                fontWeight = FontWeight.Light,
-            )
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (style.showDate) {
             Text(
                 text = now.format(DateTimeFormatter.ofPattern("EEEE, d MMMM")),
-                color = Color.White.copy(alpha = 0.8f),
-                fontSize = 16.sp,
+                color = color.copy(alpha = 0.85f),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Medium,
+                style = androidx.compose.ui.text.TextStyle(shadow = shadow),
             )
         }
+        Text(
+            text = now.format(DateTimeFormatter.ofPattern("HH:mm")),
+            color = color,
+            fontSize = (84 * style.clockScale).sp,
+            fontWeight = weight,
+            style = androidx.compose.ui.text.TextStyle(shadow = shadow),
+        )
     }
 }
 
