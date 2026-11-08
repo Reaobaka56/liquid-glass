@@ -21,6 +21,8 @@ data class AppEntry(
     val label: String,
     val packageName: String,
     val icon: ImageBitmap,
+    val iconAssignment: String? = null,
+    val customIcon: ImageBitmap? = null,
 )
 
 data class AppShortcut(

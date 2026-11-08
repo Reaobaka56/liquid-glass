@@ -17,6 +17,7 @@ import dev.glass.launcher.settings.LockStyleStore
 import android.service.wallpaper.WallpaperService
 import android.view.Choreographer
 import android.view.SurfaceHolder
+import androidx.core.content.ContextCompat
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -39,6 +40,7 @@ class GlassWallpaperService : WallpaperService() {
         private val store = WallpaperStore(applicationContext)
         private val choreographer = Choreographer.getInstance()
         private val photoPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+        private val foregroundPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         private val blobPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val basePaint = Paint()
         private val styleStore = LockStyleStore(applicationContext)
@@ -49,9 +51,11 @@ class GlassWallpaperService : WallpaperService() {
         private var width = 0
         private var height = 0
         private var bitmap: Bitmap? = null
+        private var foregroundBitmap: Bitmap? = null
 
         // path + mtime: picking new photos rewrites 000.img in place, so the path alone never changes.
         private var loadedKey: String? = null
+        private var loadedForegroundKey: String? = null
 
         // Set when the photo may have changed (wake, screen off, resize). Without it the photo
         // directory was listed and sorted on every frame while tilting.
@@ -90,19 +94,32 @@ class GlassWallpaperService : WallpaperService() {
             }
         }
 
+        private val refreshLayers = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                sourceDirty = true
+                requestFrame()
+            }
+        }
+
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
             applicationContext.registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF))
-            applicationContext.registerReceiver(timeTick, IntentFilter(Intent.ACTION_TIME_TICK))
+            val filter = IntentFilter(ACTION_REFRESH)
+            ContextCompat.registerReceiver(
+                applicationContext,
+                refreshLayers,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
         }
 
         override fun onDestroy() {
             applicationContext.unregisterReceiver(screenOff)
-            applicationContext.unregisterReceiver(timeTick)
+            applicationContext.unregisterReceiver(refreshLayers)
             tilt.stop()
             choreographer.removeFrameCallback(this)
             bitmap = null
-            subject = null
+            foregroundBitmap = null
             super.onDestroy()
         }
 
@@ -156,23 +173,18 @@ class GlassWallpaperService : WallpaperService() {
             style = styleStore.load()
 
             val file = store.current()
-            if (file == null) {
-                bitmap = null
-                subject = null
-                loadedKey = null
-                return
-            }
-            val key = "${file.path}:${file.lastModified()}"
+            val key = file?.let { "${it.path}:${it.lastModified()}:${it.length()}:${store.revision()}" }
             if (key != loadedKey) {
-                bitmap = store.decode(file, width, height)
-                subject = null
+                bitmap = file?.let { store.decode(it, width, height) }
                 loadedKey = key
             }
-            // The cut-out is only needed for the depth effect, and only on the lock screen.
-            subject = if (style.depthEnabled && isLockEngine()) {
-                subject ?: depthStore.load(file)
-            } else {
-                null
+            val foreground = store.foreground()
+            val foregroundKey = foreground?.let {
+                "${it.path}:${it.lastModified()}:${it.length()}:${store.revision()}"
+            }
+            if (foregroundKey != loadedForegroundKey) {
+                foregroundBitmap = foreground?.let { store.decode(it, width, height) }
+                loadedForegroundKey = foregroundKey
             }
         }
 
@@ -203,12 +215,23 @@ class GlassWallpaperService : WallpaperService() {
         private fun drawScene(canvas: Canvas) {
             val w = width.toFloat()
             val h = height.toFloat()
-            val lock = isLockEngine() && style.lockClock
+            val settings = applicationContext.getSharedPreferences("launcher_settings", Context.MODE_PRIVATE)
+            val scale = settings.getFloat("wallpaper_scale", 1f).coerceIn(1f, 2f)
+            val dx = (settings.getFloat("wallpaper_x", 0f).coerceIn(-0.5f, 0.5f) -
+                shownX * Parallax.SHIFT_X) * w
+            val dy = (settings.getFloat("wallpaper_y", 0f).coerceIn(-0.5f, 0.5f) -
+                shownY * Parallax.SHIFT_Y) * h
 
             // Same transform the launcher applies to its own backdrop: zoom about the centre,
-            // then shift, so home and lock line up. [depth] scales the shift per layer, which is
-            // what makes the clock look like it sits between the background and the subject.
-            fun layer(depth: Float, draw: () -> Unit) {
+            // then shift, so home and lock line up.
+            canvas.translate(w / 2f + dx, h / 2f + dy)
+            canvas.scale(Parallax.ZOOM * scale, Parallax.ZOOM * scale)
+            canvas.translate(-w / 2f, -h / 2f)
+
+            val photo = bitmap
+            if (photo != null) {
+                // "Crop" scaling: fill the screen, centred.
+                val s = max(w / photo.width, h / photo.height)
                 canvas.save()
                 canvas.translate(
                     w / 2f - shownX * w * Parallax.SHIFT_X * depth,
@@ -220,32 +243,24 @@ class GlassWallpaperService : WallpaperService() {
                 canvas.restore()
             }
 
-            layer(1f) {
-                val photo = bitmap
-                if (photo != null) {
-                    // "Crop" scaling: fill the screen, centred.
-                    val s = max(w / photo.width, h / photo.height)
-                    canvas.save()
-                    canvas.translate((w - photo.width * s) / 2f, (h - photo.height * s) / 2f)
-                    canvas.scale(s, s)
-                    canvas.drawBitmap(photo, 0f, 0f, photoPaint)
-                    canvas.restore()
-                } else {
-                    drawAurora(canvas, w, h)
-                }
+            foregroundBitmap?.let { subject ->
+                val scale = settings.getFloat("subject_scale", 1f).coerceIn(0.6f, 2f)
+                val x = settings.getFloat("subject_x", 0f).coerceIn(-0.5f, 0.5f)
+                val y = settings.getFloat("subject_y", 0f).coerceIn(-0.5f, 0.5f)
+                foregroundPaint.alpha = (settings.getFloat("subject_opacity", 1f).coerceIn(0f, 1f) * 255).toInt()
+                canvas.save()
+                canvas.translate(w / 2f + x * w, h / 2f + y * h)
+                canvas.scale(scale, scale)
+                canvas.translate(-w / 2f, -h / 2f)
+                val s = max(w / subject.width, h / subject.height)
+                canvas.save()
+                canvas.translate((w - subject.width * s) / 2f, (h - subject.height * s) / 2f)
+                canvas.scale(s, s)
+                canvas.drawBitmap(subject, 0f, 0f, foregroundPaint)
+                canvas.restore()
+                canvas.restore()
             }
-            if (lock) {
-                layer(0.6f) {
-                    LockComposer.drawClock(
-                        canvas, w, h, style,
-                        LockComposer.timeParts(applicationContext, System.currentTimeMillis()),
-                    )
-                }
-            }
-            val cut = subject
-            if (lock && cut != null) {
-                layer(0.3f) { LockComposer.drawSubject(canvas, w, h, cut, style) }
-            }
+            canvas.restore()
         }
 
         /** Mirrors the launcher's built-in aurora so the lock screen matches the home screen. */
@@ -277,8 +292,15 @@ class GlassWallpaperService : WallpaperService() {
         }
     }
 
-    private companion object {
-        const val EASE = 0.2f
-        const val SETTLED = 0.002f
+    companion object {
+        private const val EASE = 0.2f
+        private const val SETTLED = 0.002f
+        private const val ACTION_REFRESH = "dev.glass.launcher.REFRESH_WALLPAPER_LAYERS"
+
+        fun requestRefresh(context: Context) {
+            context.applicationContext.sendBroadcast(
+                Intent(ACTION_REFRESH).setPackage(context.packageName),
+            )
+        }
     }
 }
