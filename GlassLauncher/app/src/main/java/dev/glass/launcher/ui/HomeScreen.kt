@@ -227,6 +227,7 @@ fun HomeScreen(
                         GlassButton("Settings", onClick = { vm.settingsOpen = true })
                     }
                     HomeClock(vm.lockStyle)
+                    MediaCard(Modifier.padding(bottom = 8.dp))
 
                     Spacer(Modifier.height(12.dp))
 

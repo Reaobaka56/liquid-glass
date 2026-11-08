@@ -60,7 +60,7 @@ object LockComposer {
     fun typefaceFor(weight: Int): Typeface = faces.getOrPut(weight) {
         when {
             weight <= 150 -> Typeface.create("sans-serif-thin", Typeface.NORMAL)
-            weight <= 350 -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+            weight <= 350 -> Typeface.create("sans-serif-condensed-light", Typeface.NORMAL)
             weight <= 450 -> Typeface.create("sans-serif", Typeface.NORMAL)
             weight <= 550 -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
             weight <= 750 -> Typeface.create("sans-serif", Typeface.BOLD)
@@ -72,8 +72,10 @@ object LockComposer {
     fun drawClock(canvas: Canvas, w: Float, h: Float, style: LockStyle, time: TimeParts) {
         val base = w * (if (style.stacked) 0.40f else 0.24f) * style.clockScale
         clockPaint.typeface = typefaceFor(style.clockWeight)
-        clockPaint.textSize = base
-        clockPaint.color = style.clockColor
+        // Tall and narrow like the iOS lock clock, slightly see-through so the photo shows in it.
+        clockPaint.textScaleX = if (style.stacked) 0.82f else 1f
+        clockPaint.textSize = if (style.stacked) base * 1.15f else base
+        clockPaint.color = if (style.stacked) (style.clockColor and 0x00FFFFFF) or (0xD0 shl 24) else style.clockColor
         clockPaint.setShadowLayer(base * 0.06f, 0f, base * 0.02f, 0x59000000)
 
         val cx = w / 2f
